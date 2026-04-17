@@ -426,17 +426,14 @@ export default function (pi: ExtensionAPI) {
         clientSecret: bot.clientSecret
       });
 
-      // 注册消息处理器
-      client.registerAllEventListener((event) => {
-        console.log(`[dingtalkbot] 收到事件: topic=${event.headers?.topic}, type=${event.headers?.eventType}`);
-        // 只处理机器人消息
-        if (event.headers?.topic !== TOPIC_ROBOT) {
-          console.log(`[dingtalkbot] 非机器人消息，跳过`);
-          return { status: EventAck.SUCCESS };
-        }
+      // 注册机器人消息回调
+      client.registerCallbackListener(TOPIC_ROBOT, async (res) => {
+        console.log(`[dingtalkbot] 收到机器人消息`);
+        console.log(`[dingtalkbot] headers:`, JSON.stringify(res.headers));
+        console.log(`[dingtalkbot] data:`, res.data);
 
         try {
-          const message = JSON.parse(event.data);
+          const message = JSON.parse(res.data);
           const content = message?.text?.content || "";
           
           // 过滤空消息
@@ -498,8 +495,6 @@ ${content}`);
         } catch (err) {
           console.error('[dingtalkbot] 解析消息失败:', err);
         }
-        
-        return { status: EventAck.SUCCESS };
       });
 
       // 监听连接成功事件
