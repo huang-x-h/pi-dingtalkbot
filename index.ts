@@ -45,6 +45,10 @@ interface DingTalkSession {
 // HTTP API
 // ============================================================================
 
+// 钉钉消息类型限制
+const DINGTALK_TEXT_LIMIT = 2048;
+const DINGTALK_MARKDOWN_LIMIT = 4096;
+
 async function sendMessage(sessionWebhook: string, msgtype: string, content: any): Promise<void> {
   const res = await fetch(sessionWebhook, {
     method: "POST",
@@ -52,6 +56,50 @@ async function sendMessage(sessionWebhook: string, msgtype: string, content: any
     body: JSON.stringify({ msgtype, [msgtype]: content })
   });
   if (!res.ok) throw new Error(`发送消息失败: HTTP ${res.status}`);
+}
+
+// 发送长文本消息，自动拆分
+async function sendLongText(sessionWebhook: string, text: string): Promise<void> {
+  const limit = DINGTALK_TEXT_LIMIT - 20; // 预留空间给序号
+  
+  if (text.length <= limit) {
+    await sendMessage(sessionWebhook, "text", { content: text });
+    return;
+  }
+  
+  // 计算需要拆分的条数
+  const totalChunks = Math.ceil(text.length / limit);
+  let sent = 0;
+  
+  while (sent < text.length) {
+    const chunk = text.slice(sent, sent + limit);
+    const isFirst = sent === 0;
+    const isLast = sent + limit >= text.length;
+    const current = Math.floor(sent / limit) + 1;
+    
+    // 构造带序号的消息
+    let msg = chunk;
+    if (totalChunks > 1) {
+      if (isFirst) {
+        msg = `[(${current}/${totalChunks})]
+${chunk}`;
+      } else if (isLast) {
+        msg = `[(${current}/${totalChunks})]
+${chunk}`;
+      } else {
+        msg = `[(${current}/${totalChunks})]
+${chunk}`;
+      }
+    }
+    
+    await sendMessage(sessionWebhook, "text", { content: msg });
+    sent += limit;
+    
+    // 如果还有更多内容，添加短暂延迟避免频率限制
+    if (sent < text.length) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+  }
 }
 
 // ============================================================================
@@ -635,7 +683,7 @@ export default function (pi: ExtensionAPI) {
       const session = dingTalkSessions.get(messageId);
       if (session && !session.hasReplied) {
         session.hasReplied = true;
-        await sendMessage(session.sessionWebhook, "text", { content: content.trim() });
+        await sendLongText(session.sessionWebhook, content.trim());
         console.log(`[dingtalkbot] 回复 [${messageId.slice(0, 8)}...]: ${content.slice(0, 50)}`);
       }
     } else if (content.trim()) {
@@ -643,7 +691,7 @@ export default function (pi: ExtensionAPI) {
       for (const [msgId, session] of dingTalkSessions) {
         if (!session.hasReplied) {
           session.hasReplied = true;
-          await sendMessage(session.sessionWebhook, "text", { content: content.trim() });
+          await sendLongText(session.sessionWebhook, content.trim());
           console.log(`[dingtalkbot] 回复 [降级 ${msgId.slice(0, 8)}...]: ${content.slice(0, 50)}`);
           break;
         }
