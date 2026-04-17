@@ -1,0 +1,42 @@
+{
+  "name": "pi-dingtalkbot",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "钉钉智能机器人 Stream 长连接扩展 for pi",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "dingtalk",
+    "dingtalkbot",
+    "钉钉",
+    "stream",
+    "long-connection",
+    "extension"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/huang-x-h/pi-dingtalkbot.git"
+  },
+  "homepage": "https://github.com/huang-x-h/pi-dingtalkbot#readme",
+  "bugs": {
+    "url": "https://github.com/huang-x-h/pi-dingtalkbot/issues"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-agent-core": "*",
+    "@mariozechner/pi-ai": "*",
+    "@mariozechner/pi-coding-agent": "*",
+    "@sinclair/typebox": "*"
+  },
+  "dependencies": {
+    "dingtalk-stream": "^2.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3"
+  }
+}
