@@ -313,9 +313,13 @@ export default function (pi: ExtensionAPI) {
   // Status - 只展示 Bot 名称和连接状态，未使用时不显示
   function setStatus(msg?: string) {
     const ctx = currentCtx;
-    if (!ctx) return;
+    if (!ctx) {
+      console.log(`[dingtalkbot] setStatus: ctx 为空，无法设置状态栏`);
+      return;
+    }
     
     const active = getActiveBot(globalBots, sessionCfg.activeBotId);
+    console.log(`[dingtalkbot] setStatus: active=${active?.name || active?.clientId}, connected=${connected}, msg=${msg}`);
     
     // 如果没有配置机器人或未连接，隐藏状态栏
     if (!active || !connected) {
@@ -408,6 +412,7 @@ export default function (pi: ExtensionAPI) {
 
       // 保存上下文用于后续更新状态
       currentCtx = ctx;
+      console.log(`[dingtalkbot] connect: currentCtx 已设置`);
 
       console.log(`[dingtalkbot] ⚠️ 提示: 同一机器人只能有一个连接，其他会话将被断开`);
 
