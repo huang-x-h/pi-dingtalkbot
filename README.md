@@ -26,23 +26,30 @@ pi install npm:pi-dingtalkbot
 pi install git:github.com/huang-x-h/pi-dingtalkbot
 ```
 
+### 本地开发
+```bash
+pi install ./D:/codebase/github/pi-dingtalkbot
+```
+
 ## 快速开始
 
 ### 1. 获取钉钉机器人凭证
 
-1. 登录 [钉钉开放平台](https://open.dingtalk.com/)
-2. 创建企业内部应用
-3. 添加机器人能力
-4. 获取 **ClientID** 和 **ClientSecret**
-5. 发布机器人版本
+1. 登录 [钉钉开发者后台](https://open.dingtalk.com/)
+2. 创建**企业内部应用**
+3. 在**应用功能**中添加**机器人**能力
+4. 选择 **Stream 模式** 并发布
+5. 在**应用详情**获取：
+   - **ClientID**（即 AppKey）
+   - **ClientSecret**（即 AppSecret）
 
 ### 2. 添加机器人（全局配置）
 
 ```
 /dingtalkbot-add
 # 机器人名称(可选): 我的助手
-# ClientID: dingxxxxxxxxxxxxxxxx
-# ClientSecret: xxxxxxxxxxxxxxx
+# ClientID (AppKey): dingxxxxxxxxxxxxxxxx
+# ClientSecret (AppSecret): xxxxxxxxxxxxxxx
 ```
 
 > 添加后所有会话都能看到这个机器人
@@ -54,19 +61,30 @@ pi install git:github.com/huang-x-h/pi-dingtalkbot
 
 输出示例：
 全局机器人列表（共 2 个）：
-▶ ✅ 助手A (ding111...)  ← ▶ 表示本会话正在使用
-○ 助手B (ding222...)
-本会话启用: 助手A
+▶ ✅ 我的助手...  ← ▶ 表示本会话正在使用
+○ 测试助手...
+本会话启用: 我的助手...
 ```
 
 ### 4. 选择本会话使用的机器人
 
 ```
 /dingtalkbot-use
-# 选择机器人（仅本会话）: 助手B
+# 选择机器人（仅本会话）: 测试助手
 
-✅ 本会话已切换到 助手B
+✅ 本会话已切换到 测试助手...
 ```
+
+## 配置参数说明
+
+钉钉 Stream 模式只需要两个核心参数：
+
+| 参数 | 说明 | 获取位置 |
+|------|------|----------|
+| **ClientID** | 即 AppKey，应用的唯一标识 | 钉钉开发者后台 → 应用详情 |
+| **ClientSecret** | 即 AppSecret，应用的密钥 | 钉钉开发者后台 → 应用详情 |
+
+> ⚠️ **注意**：需要在应用中开通"机器人"能力，并选择 **Stream 模式** 发布后才能使用。
 
 ## 完整命令说明
 
@@ -78,11 +96,11 @@ pi install git:github.com/huang-x-h/pi-dingtalkbot
 
 ```
 /dingtalkbot-add
-  名称: 工作助手
-  ClientID: dingxxxxxxxxxxxxx
-  ClientSecret: xxxxxxxxxxxxxxx
+  机器人名称(可选): 工作助手
+  ClientID (AppKey): dingxxxxxxxxxxxxx
+  ClientSecret (AppSecret): xxxxxxxxxxxxxxx
 
-✅ 已添加 工作助手（全局配置）
+✅ 已添加 工作助手...（全局配置）
 ```
 
 #### `/dingtalkbot-list` - 列出机器人（全局）
@@ -92,26 +110,9 @@ pi install git:github.com/huang-x-h/pi-dingtalkbot
 - `○` - 其他机器人
 - `✅` - 当前已连接
 
-```
-/dingtalkbot-list
-
-全局机器人列表（共 3 个）：
-▶ ✅ 工作助手
-○ 测试助手
-○ 个人助手
-本会话启用: 工作助手
-```
-
 #### `/dingtalkbot-remove` - 删除机器人（全局）
 
 从全局配置删除机器人，**所有会话都将失去该机器人**。
-
-```
-/dingtalkbot-remove
-  输入要删除的ClientID或名称: 工作助手
-
-✅ 已删除 工作助手
-```
 
 ### 会话配置命令
 
@@ -119,43 +120,22 @@ pi install git:github.com/huang-x-h/pi-dingtalkbot
 
 选择本会话使用哪个机器人，**不影响其他会话**。
 
-```
-/dingtalkbot-use
-  选择机器人（仅本会话）:
-  ○ 工作助手
-  ▶ 测试助手  ← 当前选择
-  ○ 个人助手
-
-✅ 本会话已切换到 测试助手
-```
-
 #### `/dingtalkbot-enable` - 启用机器人（本会话）
 
 启用本会话的机器人连接。
 
-```
-/dingtalkbot-enable
-✅ 本会话已启用并连接 工作助手
-```
-
 #### `/dingtalkbot-disable` - 禁用机器人（本会话）
 
 禁用本会话的机器人连接，**不影响其他会话**。
-
-```
-/dingtalkbot-disable
-🔌 本会话已禁用机器人并断开连接
-```
 
 #### `/dingtalkbot-status` - 查看状态
 
 显示混合信息：全局机器人数量 + 本会话详细状态。
 
 ```
-/dingtalkbot-status
-
-✅ 工作助手
+✅ 工作助手...
 状态: 已连接
+ClientID: dingxxxxxxxxxxxxx
 全局机器人: 3 个
 本会话活跃会话: 2 个
 会话ID: abc12345
@@ -164,21 +144,6 @@ pi install git:github.com/huang-x-h/pi-dingtalkbot
 #### `/dingtalkbot-session-info` - 会话信息
 
 显示本会话的配置详情。
-
-```
-/dingtalkbot-session-info
-
-会话ID: pid-1234
-全局配置: ~/.pi/agent/dingtalk-bot.json
-会话配置: ~/.pi/agent/dingtalk-bot-session-pid-1234.json
-临时目录: ~/.pi/agent/tmp/dingtalk-bot/pid-1234
-
-【全局】机器人数量: 3
-【会话】启用机器人: dingxxxxxxxxxxxxx
-【会话】启用状态: ✅
-【会话】连接状态: 🟢 已连接
-【会话】活跃消息会话: 2 个
-```
 
 ## Tools
 
@@ -193,9 +158,15 @@ pi install git:github.com/huang-x-h/pi-dingtalkbot
 }
 ```
 
+**示例：**
+```
+使用 dingtalkbot-send 发送消息 "你好" 到钉钉
+使用 dingtalkbot-send 发送 markdown 格式消息 "# 标题\n这是内容" 到钉钉
+```
+
 ### `dingtalkbot-attach`
 
-发送文件到钉钉（钉钉机器人不支持直接发送文件，将转为消息列表形式通知）。
+发送文件列表到钉钉（钉钉机器人不支持直接发送文件附件，将转为消息列表形式通知）。
 
 ```typescript
 {
@@ -203,49 +174,10 @@ pi install git:github.com/huang-x-h/pi-dingtalkbot
 }
 ```
 
-## 使用场景示例
-
-### 场景1：团队协作，共享机器人池
-
+**示例：**
 ```
-全局配置: 3 个机器人
-├─ 工作助手 (ClientID-A)
-├─ 测试助手 (ClientID-B)
-└─ 个人助手 (ClientID-C)
-
-Session A (张三)          Session B (李四)
-├─ 选择: 工作助手          ├─ 选择: 测试助手
-├─ 状态: ✅ 已连接         ├─ 状态: ✅ 已连接
-└─ 独立运行               └─ 独立运行
-
-Session C (王五)
-├─ 选择: 个人助手
-├─ 状态: ✅ 已连接
-└─ 独立运行
-```
-
-**特点**：
-- ✅ 机器人配置一次，团队共享
-- ✅ 每个人独立选择使用哪个机器人
-- ✅ 互不干扰
-
-### 场景2：多项目并行
-
-```
-Terminal 1 (项目A)        Terminal 2 (项目B)
-├─ /dingtalkbot-use       ├─ /dingtalkbot-use
-│   选择: 项目A机器人      │   选择: 项目B机器人
-├─ 状态: 🤖[1234] ✅       ├─ 状态: 🤖[5678] ✅
-└─ 连接 ClientID-A        └─ 连接 ClientID-B
-```
-
-### 场景3：工作/生活分离
-
-```
-Session 1 (工作)          Session 2 (生活)
-├─ 机器人: 工作助手        ├─ 机器人: 个人助手
-├─ 配置: 公司钉钉应用      ├─ 配置: 个人钉钉应用
-└─ 消息: 工作群           └─ 消息: 家庭群
+使用 dingtalkbot-attach 发送文件 "D:/documents/report.pdf"
+使用 dingtalkbot-attach 发送多个文件 ["file1.txt", "file2.txt"]
 ```
 
 ## ⚠️ 重要限制
@@ -310,7 +242,13 @@ Session A (已连接工作助手)     Session B
 │           ▼                        │                       │
 │  ┌─────────────────┐               │                       │
 │  │   钉钉           │◄──────────────┘                       │
-│  │   智能机器人     │                                      │
+│  │   Stream 网关    │                                      │
+│  └─────────────────┘                                       │
+│                                                              │
+│  回复消息:                                                   │
+│  ┌─────────────────┐                                       │
+│  │   HTTP API      │────────► 钉钉服务器                   │
+│  │   sessionWebhook │     (通过消息中的 webhook 地址)       │
 │  └─────────────────┘                                       │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -319,6 +257,7 @@ Session A (已连接工作助手)     Session B
 
 - [钉钉智能机器人开发文档](https://open.dingtalk.com/document/development/development-robot-overview)
 - [钉钉消息接口文档](https://open.dingtalk.com/document/development/message-corpconversation-overview)
+- [Stream 模式介绍](https://open.dingtalk.com/document/development/introduction-to-stream-mode)
 - [dingtalk-stream SDK](https://www.npmjs.com/package/dingtalk-stream)
 
 ## License

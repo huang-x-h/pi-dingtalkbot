@@ -4,7 +4,9 @@
  * 钉钉智能机器人 Stream 长连接扩展 for pi
  * 支持多个机器人配置和快速切换
  * 
- * 参考: https://open.dingtalk.com/document/development/development-robot-overview
+ * 参考: 
+ * - https://open.dingtalk.com/document/development/development-robot-overview
+ * - https://open.dingtalk.com/document/development/introduction-to-stream-mode
  */
 
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
@@ -19,10 +21,19 @@ import { Type } from "@sinclair/typebox";
 // Config
 // ============================================================================
 
+/**
+ * 钉钉机器人配置
+ * 
+ * 钉钉 Stream 模式连接参数：
+ * - clientId: 应用的 ClientID（即 AppKey），在钉钉开发者后台 - 应用详情 获取
+ * - clientSecret: 应用的 ClientSecret（即 AppSecret），在钉钉开发者后台 - 应用详情 获取
+ * 
+ * 注意：需要先在应用中开通"机器人"能力，并选择 Stream 模式
+ */
 interface BotConfig {
-  clientId: string;
-  clientSecret: string;
-  name?: string;
+  clientId: string;      // ClientID（AppKey）
+  clientSecret: string;   // ClientSecret（AppSecret）
+  name?: string;          // 自定义名称（可选）
 }
 
 // 全局配置：所有会话共享机器人列表
@@ -32,7 +43,7 @@ interface GlobalConfig {
 
 // 会话配置：每个会话独立选择启用哪个机器人
 interface SessionConfig {
-  activeBotId?: string;  // 当前会话启用的机器人
+  activeBotId?: string;  // 当前会话启用的机器人（使用 clientId）
   enabled?: boolean;     // 当前会话是否启用
 }
 
@@ -83,6 +94,7 @@ async function getAccessToken(clientId: string, clientSecret: string): Promise<s
 // 发送消息到钉钉
 async function sendDingTalkMessage(clientId: string, clientSecret: string, sessionWebhook: string, msgtype: string, content: any): Promise<void> {
   // 如果有 sessionWebhook，直接用它发送（无需 token）
+  // 这是 Stream 模式推荐的消息回复方式
   if (sessionWebhook) {
     const url = sessionWebhook;
     const body = {
@@ -201,12 +213,19 @@ async function saveSessionConfig(c: SessionConfig) {
   await writeFile(SESSION_CONFIG, JSON.stringify(c, null, "\t") + "\n");
 }
 
-function getActiveBot(bots: BotConfig[], activeBotId?: string): BotConfig | undefined {
-  return bots.find(b => b.clientId === activeBotId) || bots[0];
+// 根据 clientId 查找活跃机器人
+function getActiveBot(bots: BotConfig[], clientId?: string): BotConfig | undefined {
+  return bots.find(b => b.clientId === clientId) || bots[0];
 }
 
+// 根据 clientId 查找机器人
 function getBotById(bots: BotConfig[], clientId: string): BotConfig | undefined {
   return bots.find(b => b.clientId === clientId);
+}
+
+// 获取机器人显示名称
+function getBotDisplayName(bot: BotConfig): string {
+  return bot.name || bot.clientId.slice(0, 8) + "...";
 }
 
 // ============================================================================
@@ -296,7 +315,7 @@ export default function (pi: ExtensionAPI) {
       return;
     }
     
-    const botName = active.name || active.clientId.slice(0, 8);
+    const botName = getBotDisplayName(active);
     
     if (msg) {
       // 有错误信息时显示
@@ -382,7 +401,8 @@ export default function (pi: ExtensionAPI) {
     try {
       disconnect();
 
-      console.log(`[dingtalkbot] 连接中: ${bot.name || bot.clientId}`);
+      const botName = getBotDisplayName(bot);
+      console.log(`[dingtalkbot] 连接中: ${botName}`);
       console.log(`[dingtalkbot] ⚠️ 提示: 同一机器人只能有一个连接，其他会话将被断开`);
 
       activeBotConfig = bot;
@@ -449,7 +469,7 @@ ${content}`);
 
       // 监听连接成功事件
       client.on("connect", () => {
-        console.log(`[dingtalkbot] ✅ ${bot.name || bot.clientId} 已连接`);
+        console.log(`[dingtalkbot] ✅ ${botName} 已连接`);
         connected = true;
         setStatus(ctx);
       });
@@ -464,7 +484,7 @@ ${content}`);
         const isKicked = reasonStr?.includes("kick") || reasonStr?.includes("replaced") || reasonStr?.includes("conflict") || reasonStr?.includes("403");
         const disconnectMsg = isKicked ? `被其他会话踢掉` : `断开`;
         
-        console.log(`[dingtalkbot] ❌ ${bot.name || bot.clientId} ${disconnectMsg}${reasonStr ? `: ${reasonStr}` : ""}`);
+        console.log(`[dingtalkbot] ❌ ${botName} ${disconnectMsg}${reasonStr ? `: ${reasonStr}` : ""}`);
         
         if (wasConnected && isKicked) {
           setStatus(ctx, `被其他会话连接 (${SESSION_ID.slice(0, 4)})`);
@@ -476,12 +496,12 @@ ${content}`);
       // 监听错误事件
       client.on("error", (err: any) => {
         const errMsg = String(err);
-        console.log(`[dingtalkbot] ❌ ${bot.name || bot.clientId}`, err);
+        console.log(`[dingtalkbot] ❌ ${botName}`, err);
         connected = false;
         
         if (errMsg.includes("already connected") || errMsg.includes("connection refused") || errMsg.includes("403")) {
           setStatus(ctx, "连接被占用");
-          ctx.ui.notify(`❌ ${bot.name || bot.clientId} 连接失败：该机器人已在其他会话连接`, "error");
+          ctx.ui.notify(`❌ ${botName} 连接失败：该机器人已在其他会话连接`, "error");
         } else {
           setStatus(ctx, errMsg);
         }
@@ -542,9 +562,7 @@ ${content}`);
       
       if (files.length === 0) throw new Error("没有有效的文件");
       
-      const fileList = files.map(f => `📎 ${basename(f)}`).join("\n");
-      
-      // 使用 "### 文件列表" 作为 markdown 格式发送
+      // 使用 markdown 格式发送文件列表
       try {
         await sendDingTalkMessage(
           activeBotConfig?.clientId || "",
@@ -558,6 +576,7 @@ ${content}`);
         );
       } catch (err) {
         // 如果 markdown 失败，尝试文本格式
+        const fileList = files.map(f => `📎 ${basename(f)}`).join("\n");
         await sendDingTalkMessage(
           activeBotConfig?.clientId || "",
           activeBotConfig?.clientSecret || "",
@@ -603,23 +622,26 @@ ${content}`);
     description: "添加机器人（全局）",
     handler: async (_args, ctx) => {
       const name = await ctx.ui.input("机器人名称(可选)", "");
-      const clientId = await ctx.ui.input("ClientID", "dingxxxxxxxxxxxxxxxx");
+      const clientId = await ctx.ui.input("ClientID (AppKey)", "dingxxxxxxxxxxxxxxxx");
       if (!clientId) return;
-      const clientSecret = await ctx.ui.input("ClientSecret", "");
+      const clientSecret = await ctx.ui.input("ClientSecret (AppSecret)", "");
       if (!clientSecret) return;
 
       const globalCfg = await loadGlobalConfig();
       
+      // 检查是否已存在
       if (globalCfg.bots.find(b => b.clientId === clientId.trim())) {
         ctx.ui.notify("❌ 该机器人已存在", "error");
         return;
       }
       
-      globalCfg.bots.push({ 
-        clientId: clientId.trim(), 
-        clientSecret: clientSecret.trim(), 
-        name: name?.trim() || undefined 
-      });
+      const newBot: BotConfig = {
+        clientId: clientId.trim(),
+        clientSecret: clientSecret.trim(),
+        name: name?.trim() || undefined
+      };
+      
+      globalCfg.bots.push(newBot);
       await saveGlobalConfig(globalCfg);
       
       globalBots = globalCfg.bots;
@@ -630,9 +652,7 @@ ${content}`);
         await saveSessionConfig(sessionCfg);
       }
       
-      ctx.ui.notify(`✅ 已添加 ${name || clientId.slice(0, 8)}（全局配置）`, "success");
-      
-      const newBot = globalBots[globalBots.length - 1];
+      ctx.ui.notify(`✅ 已添加 ${name || getBotDisplayName(newBot)}（全局配置）`, "success");
       await connect(ctx, newBot);
     },
   });
@@ -650,9 +670,14 @@ ${content}`);
         const list = globalBots.map(b => {
           const isSessionActive = b.clientId === sessionCfg.activeBotId ? "▶" : "○";
           const isConnected = connected && b.clientId === sessionCfg.activeBotId ? "✅" : "";
-          return `${isSessionActive} ${isConnected} ${b.name || b.clientId}`;
+          return `${isSessionActive} ${isConnected} ${getBotDisplayName(b)}`;
         }).join("\n");
-        const sessionInfo = sessionCfg.activeBotId ? `本会话启用: ${getActiveBot(globalBots, sessionCfg.activeBotId)?.name || sessionCfg.activeBotId}` : "本会话未启用机器人";
+        
+        const activeBot = getActiveBot(globalBots, sessionCfg.activeBotId);
+        const sessionInfo = sessionCfg.activeBotId 
+          ? `本会话启用: ${getBotDisplayName(activeBot!)}` 
+          : "本会话未启用机器人";
+        
         ctx.ui.notify(`全局机器人列表（共 ${globalBots.length} 个）:\n${list}\n${sessionInfo}`, "info");
       }
     },
@@ -670,15 +695,19 @@ ${content}`);
         return;
       }
       
-      const options = globalBots.map(b => 
-        `${b.clientId === sessionCfg.activeBotId ? "▶ " : "○ "}${b.name || b.clientId}`
-      );
+      const options = globalBots.map(b => {
+        const isActive = b.clientId === sessionCfg.activeBotId;
+        return `${isActive ? "▶ " : "○ "}${getBotDisplayName(b)}`;
+      });
       
       const selected = await ctx.ui.select("选择机器人（仅本会话）", options);
       if (!selected) return;
       
       const selectedLabel = selected.replace(/^[▶○] /, "");
-      const bot = globalBots.find(b => b.clientId === selectedLabel || (b.name || b.clientId) === selectedLabel);
+      const bot = globalBots.find(b => 
+        getBotDisplayName(b) === selectedLabel || 
+        b.clientId === selectedLabel
+      );
       if (!bot) {
         ctx.ui.notify("❌ 机器人不存在", "error");
         return;
@@ -688,7 +717,7 @@ ${content}`);
       sessionCfg.enabled = true;
       await saveSessionConfig(sessionCfg);
       
-      ctx.ui.notify(`✅ 本会话已切换到 ${bot.name || bot.clientId}`, "success");
+      ctx.ui.notify(`✅ 本会话已切换到 ${getBotDisplayName(bot)}`, "success");
       await connect(ctx, bot);
     },
   });
@@ -708,30 +737,34 @@ ${content}`);
       const name = await ctx.ui.input("输入要删除的ClientID或名称", "");
       if (!name) return;
 
-      const idx = globalBots.findIndex(b => b.clientId === name || b.name === name);
+      const idx = globalBots.findIndex(b => 
+        b.clientId === name || 
+        b.name === name
+      );
       if (idx === -1) {
         ctx.ui.notify("❌ 机器人不存在", "error");
         return;
       }
 
       const removed = globalBots.splice(idx, 1)[0];
+      const removedName = getBotDisplayName(removed);
       
       await saveGlobalConfig({ bots: globalBots });
       
       if (sessionCfg.activeBotId === removed.clientId) {
         disconnect();
-        sessionCfg.activeBotId = globalBots[0]?.clientId;
+        const nextBot = globalBots[0];
+        sessionCfg.activeBotId = nextBot?.clientId;
         await saveSessionConfig(sessionCfg);
         
-        if (globalBots.length > 0) {
-          ctx.ui.notify(`✅ 已删除 ${removed.name || removed.clientId}，自动切换到下一个`, "success");
-          const nextBot = getActiveBot(globalBots, sessionCfg.activeBotId);
-          if (nextBot && sessionCfg.enabled) await connect(ctx, nextBot);
+        if (nextBot) {
+          ctx.ui.notify(`✅ 已删除 ${removedName}，自动切换到 ${getBotDisplayName(nextBot)}`, "success");
+          if (sessionCfg.enabled) await connect(ctx, nextBot);
         } else {
-          ctx.ui.notify(`✅ 已删除 ${removed.name || removed.clientId}（无可用机器人）`, "success");
+          ctx.ui.notify(`✅ 已删除 ${removedName}（无可用机器人）`, "success");
         }
       } else {
-        ctx.ui.notify(`✅ 已删除 ${removed.name || removed.clientId}`, "success");
+        ctx.ui.notify(`✅ 已删除 ${removedName}`, "success");
       }
     },
   });
@@ -768,8 +801,9 @@ ${content}`);
       }
       
       ctx.ui.notify(
-        `${statusIcon} ${active.name || active.clientId}
+        `${statusIcon} ${getBotDisplayName(active)}
 状态: ${statusText}
+ClientID: ${active.clientId}
 全局机器人: ${globalBots.length} 个
 本会话活跃会话: ${sessions.size} 个
 会话ID: ${SESSION_ID.slice(0, 8)}`,
@@ -792,7 +826,7 @@ ${content}`);
       const bot = getActiveBot(globalBots, sessionCfg.activeBotId);
       if (bot) {
         await connect(ctx, bot);
-        ctx.ui.notify(`✅ 本会话已启用并连接 ${bot.name || bot.clientId}`, "success");
+        ctx.ui.notify(`✅ 本会话已启用并连接 ${getBotDisplayName(bot)}`, "success");
       } else {
         ctx.ui.notify("✅ 本会话已启用，但未选择机器人，请先添加或使用 /dingtalkbot-use 选择", "warning");
       }
@@ -826,7 +860,7 @@ ${content}`);
       }
       const active = getActiveBot(globalBots, sessionCfg.activeBotId);
       const sessionList = Array.from(sessions.entries()).map(([messageId, s]) => 
-        `[${active?.name || s.botId}]
+        `[${active ? getBotDisplayName(active) : s.botId}]
   messageId: ${messageId}
   sender: ${s.senderNick} (${s.senderStaffId})
   conversationId: ${s.conversationId}`
@@ -911,7 +945,8 @@ ${content}`);
     if (!txt) return;
     
     const active = getActiveBot(globalBots, sessionCfg.activeBotId);
-    const pattern = new RegExp(`\\[dingtalkbot\\] \\[${active?.name || active?.clientId || ""}\\] \\[([^\\]]+)\\]\\n?`, "g");
+    const botName = active?.name || active?.clientId || "";
+    const pattern = new RegExp(`\\[dingtalkbot\\] \\[${botName}\\] \\[([^\\]]+)\\]\\n?`, "g");
     const replyContent = txt.replace(pattern, "");
     
     if (replyContent.trim()) {
