@@ -12,7 +12,7 @@
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { homedir } from "node:os";
-import { DWClient, TOPIC_ROBOT, TOPIC_CARD } from "dingtalk-stream";
+import { DWClient, TOPIC_ROBOT, TOPIC_CARD, EventAck } from "dingtalk-stream";
 
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
@@ -409,18 +409,14 @@ export default function (pi: ExtensionAPI) {
 
       client = new DWClient({
         clientId: bot.clientId,
-        clientSecret: bot.clientSecret,
-        subscriptions: [
-          { type: "EVENT", topic: TOPIC_ROBOT },
-          { type: "CALLBACK", topic: TOPIC_CARD }
-        ]
+        clientSecret: bot.clientSecret
       });
 
       // 注册消息处理器
       client.registerAllEventListener((event) => {
         // 只处理机器人消息
         if (event.headers?.topic !== TOPIC_ROBOT) {
-          return { status: "SUCCESS" };
+          return { status: EventAck.SUCCESS };
         }
 
         try {
@@ -429,7 +425,7 @@ export default function (pi: ExtensionAPI) {
           
           // 过滤空消息
           if (!content) {
-            return { status: "SUCCESS" };
+            return { status: EventAck.SUCCESS };
           }
 
           const messageId = message.msgId || `${Date.now()}`;
@@ -464,7 +460,7 @@ ${content}`);
           console.error('[dingtalkbot] 解析消息失败:', err);
         }
         
-        return { status: "SUCCESS" };
+        return { status: EventAck.SUCCESS };
       });
 
       // 监听连接成功事件
@@ -652,7 +648,7 @@ ${content}`);
         await saveSessionConfig(sessionCfg);
       }
       
-      ctx.ui.notify(`✅ 已添加 ${name || getBotDisplayName(newBot)}（全局配置）`, "success");
+      ctx.ui.notify(`✅ 已添加 ${name || getBotDisplayName(newBot)}（全局配置）`, "info");
       await connect(ctx, newBot);
     },
   });
@@ -717,7 +713,7 @@ ${content}`);
       sessionCfg.enabled = true;
       await saveSessionConfig(sessionCfg);
       
-      ctx.ui.notify(`✅ 本会话已切换到 ${getBotDisplayName(bot)}`, "success");
+      ctx.ui.notify(`✅ 本会话已切换到 ${getBotDisplayName(bot)}`, "info");
       await connect(ctx, bot);
     },
   });
@@ -758,13 +754,13 @@ ${content}`);
         await saveSessionConfig(sessionCfg);
         
         if (nextBot) {
-          ctx.ui.notify(`✅ 已删除 ${removedName}，自动切换到 ${getBotDisplayName(nextBot)}`, "success");
+          ctx.ui.notify(`✅ 已删除 ${removedName}，自动切换到 ${getBotDisplayName(nextBot)}`, "info");
           if (sessionCfg.enabled) await connect(ctx, nextBot);
         } else {
-          ctx.ui.notify(`✅ 已删除 ${removedName}（无可用机器人）`, "success");
+          ctx.ui.notify(`✅ 已删除 ${removedName}（无可用机器人）`, "info");
         }
       } else {
-        ctx.ui.notify(`✅ 已删除 ${removedName}`, "success");
+        ctx.ui.notify(`✅ 已删除 ${removedName}`, "info");
       }
     },
   });
@@ -826,7 +822,7 @@ ClientID: ${active.clientId}
       const bot = getActiveBot(globalBots, sessionCfg.activeBotId);
       if (bot) {
         await connect(ctx, bot);
-        ctx.ui.notify(`✅ 本会话已启用并连接 ${getBotDisplayName(bot)}`, "success");
+        ctx.ui.notify(`✅ 本会话已启用并连接 ${getBotDisplayName(bot)}`, "info");
       } else {
         ctx.ui.notify("✅ 本会话已启用，但未选择机器人，请先添加或使用 /dingtalkbot-use 选择", "warning");
       }
