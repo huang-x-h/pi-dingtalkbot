@@ -447,8 +447,6 @@ export default function (pi: ExtensionAPI) {
 
       console.log(`[dingtalkbot] ⚠️ 提示: 同一机器人只能有一个连接，其他会话将被断开`);
 
-      activeBotConfig = bot;
-
       // 尝试自动获取机器人名称
       if (!bot.name) {
         try {
@@ -471,8 +469,12 @@ export default function (pi: ExtensionAPI) {
         }
       }
 
-      // 更新显示名称
+      // 更新 activeBotConfig 为最新的 bot（包含获取到的名称）
+      activeBotConfig = bot;
+
+      // 获取显示名称（必须在获取名称之后）
       const displayName = getBotDisplayName(bot);
+      console.log(`[dingtalkbot] 连接中: ${displayName}`);
 
       client = new DWClient({
         clientId: bot.clientId,
