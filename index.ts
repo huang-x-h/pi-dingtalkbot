@@ -66,7 +66,15 @@ interface DingTalkToken {
   expireTime: number;
 }
 
+interface AppInfo {
+  name: string;
+  agentId?: number;
+  logoMediaid?: string;
+  description?: string;
+}
+
 let cachedToken: DingTalkToken | null = null;
+let cachedAppInfo: Map<string, AppInfo & { expireTime: number }> = new Map();
 
 // 获取 Access Token
 async function getAccessToken(clientId: string, clientSecret: string): Promise<string> {
@@ -89,6 +97,42 @@ async function getAccessToken(clientId: string, clientSecret: string): Promise<s
   };
   
   return cachedToken.accessToken;
+}
+
+// 获取应用信息（包含名称）
+async function getAppInfo(clientId: string, clientSecret: string): Promise<AppInfo> {
+  // 检查缓存（应用信息缓存1小时）
+  const cached = cachedAppInfo.get(clientId);
+  if (cached && cached.expireTime > Date.now() + 60000) {
+    return { name: cached.name, agentId: cached.agentId, logoMediaid: cached.logoMediaid, description: cached.description };
+  }
+  
+  try {
+    const accessToken = await getAccessToken(clientId, clientSecret);
+    
+    // 调用钉钉 API 获取应用信息
+    const res = await fetch(`https://oapi.dingtalk.com/microApp/getByAppId?access_token=${accessToken}&appId=${clientId}`);
+    const data = await res.json() as { name?: string; agentId?: number; errcode?: number; errmsg?: string };
+    
+    if (data.errcode !== 0) {
+      // 如果 API 调用失败，返回空名称（用户可以手动设置）
+      console.log(`[dingtalkbot] 获取应用信息失败: ${data.errmsg || JSON.stringify(data)}`);
+      return { name: "" };
+    }
+    
+    const appInfo: AppInfo = {
+      name: data.name || "",
+      agentId: data.agentId
+    };
+    
+    // 缓存1小时
+    cachedAppInfo.set(clientId, { ...appInfo, expireTime: Date.now() + 60 * 60 * 1000 });
+    
+    return appInfo;
+  } catch (err) {
+    console.log(`[dingtalkbot] 获取应用信息异常:`, err);
+    return { name: "" };
+  }
 }
 
 // 发送消息到钉钉
@@ -401,11 +445,34 @@ export default function (pi: ExtensionAPI) {
     try {
       disconnect();
 
-      const botName = getBotDisplayName(bot);
-      console.log(`[dingtalkbot] 连接中: ${botName}`);
       console.log(`[dingtalkbot] ⚠️ 提示: 同一机器人只能有一个连接，其他会话将被断开`);
 
       activeBotConfig = bot;
+
+      // 尝试自动获取机器人名称
+      if (!bot.name) {
+        try {
+          const appInfo = await getAppInfo(bot.clientId, bot.clientSecret);
+          if (appInfo.name) {
+            // 更新机器人名称
+            bot.name = appInfo.name;
+            // 保存到全局配置
+            const globalCfg = await loadGlobalConfig();
+            const idx = globalCfg.bots.findIndex(b => b.clientId === bot.clientId);
+            if (idx !== -1) {
+              globalCfg.bots[idx].name = appInfo.name;
+              await saveGlobalConfig(globalCfg);
+              globalBots = globalCfg.bots;
+              console.log(`[dingtalkbot] 已自动获取机器人名称: ${appInfo.name}`);
+            }
+          }
+        } catch (err) {
+          console.log(`[dingtalkbot] 自动获取机器人名称失败，将使用 ClientID`);
+        }
+      }
+
+      // 更新显示名称
+      const displayName = getBotDisplayName(bot);
 
       client = new DWClient({
         clientId: bot.clientId,
@@ -434,9 +501,8 @@ export default function (pi: ExtensionAPI) {
           const conversationId = message.conversationId || "";
           const sessionWebhook = message.sessionWebhook || "";
           const botId = bot.clientId;
-          const botName = bot.name;
 
-          console.log(`[dingtalkbot] [${botName || botId}] [${senderNick}] ${content.slice(0, 50)}...`);
+          console.log(`[dingtalkbot] [${displayName}] [${senderNick}] ${content.slice(0, 50)}...`);
 
           sessions.set(messageId, { 
             messageId, 
@@ -454,7 +520,7 @@ export default function (pi: ExtensionAPI) {
           sendThinkingMessage(messageId);
           
           // 队列消息给 AI 处理
-          queueMessage(`[dingtalkbot] [${botName || botId}] [${senderNick}]
+          queueMessage(`[dingtalkbot] [${displayName}] [${senderNick}]
 ${content}`);
         } catch (err) {
           console.error('[dingtalkbot] 解析消息失败:', err);
@@ -465,7 +531,7 @@ ${content}`);
 
       // 监听连接成功事件
       client.on("connect", () => {
-        console.log(`[dingtalkbot] ✅ ${botName} 已连接`);
+        console.log(`[dingtalkbot] ✅ ${displayName} 已连接`);
         connected = true;
         setStatus(ctx);
       });
@@ -480,7 +546,7 @@ ${content}`);
         const isKicked = reasonStr?.includes("kick") || reasonStr?.includes("replaced") || reasonStr?.includes("conflict") || reasonStr?.includes("403");
         const disconnectMsg = isKicked ? `被其他会话踢掉` : `断开`;
         
-        console.log(`[dingtalkbot] ❌ ${botName} ${disconnectMsg}${reasonStr ? `: ${reasonStr}` : ""}`);
+        console.log(`[dingtalkbot] ❌ ${displayName} ${disconnectMsg}${reasonStr ? `: ${reasonStr}` : ""}`);
         
         if (wasConnected && isKicked) {
           setStatus(ctx, `被其他会话连接 (${SESSION_ID.slice(0, 4)})`);
@@ -492,12 +558,12 @@ ${content}`);
       // 监听错误事件
       client.on("error", (err: any) => {
         const errMsg = String(err);
-        console.log(`[dingtalkbot] ❌ ${botName}`, err);
+        console.log(`[dingtalkbot] ❌ ${displayName}`, err);
         connected = false;
         
         if (errMsg.includes("already connected") || errMsg.includes("connection refused") || errMsg.includes("403")) {
           setStatus(ctx, "连接被占用");
-          ctx.ui.notify(`❌ ${botName} 连接失败：该机器人已在其他会话连接`, "error");
+          ctx.ui.notify(`❌ ${displayName} 连接失败：该机器人已在其他会话连接`, "error");
         } else {
           setStatus(ctx, errMsg);
         }
