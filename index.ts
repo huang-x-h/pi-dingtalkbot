@@ -534,7 +534,9 @@ ${content}`);
         
         if (errMsg.includes("already connected") || errMsg.includes("connection refused") || errMsg.includes("403")) {
           setStatus("连接被占用");
-          ctx.ui.notify(`❌ ${displayName} 连接失败：该机器人已在其他会话连接`, "error");
+          if (currentCtx) {
+            currentCtx.ui.notify(`❌ ${displayName} 连接失败：该机器人已在其他会话连接`, "error");
+          }
         } else {
           setStatus(errMsg);
         }
