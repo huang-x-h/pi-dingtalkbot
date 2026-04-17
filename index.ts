@@ -99,6 +99,21 @@ async function getAccessToken(clientId: string, clientSecret: string): Promise<s
   return cachedToken.accessToken;
 }
 
+// 获取 Access Token (新版 API)
+async function getDingTalkAccessToken(clientId: string, clientSecret: string): Promise<string> {
+  const res = await fetch(`https://api.dingtalk.com/v1.0/oauth2/accessToken`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ appKey: clientId, appSecret: clientSecret })
+  });
+  const data = await res.json() as { accessToken?: string; expireIn?: number; code?: string; message?: string };
+  
+  if (data.accessToken) {
+    return data.accessToken;
+  }
+  throw new Error(`获取 AccessToken 失败: ${data.message || JSON.stringify(data)}`);
+}
+
 // 获取应用信息（包含名称）
 async function getAppInfo(clientId: string, clientSecret: string): Promise<AppInfo> {
   // 检查缓存（应用信息缓存1小时）
@@ -108,21 +123,28 @@ async function getAppInfo(clientId: string, clientSecret: string): Promise<AppIn
   }
   
   try {
-    const accessToken = await getAccessToken(clientId, clientSecret);
+    const accessToken = await getDingTalkAccessToken(clientId, clientSecret);
     
-    // 调用钉钉 API 获取应用信息
-    const res = await fetch(`https://oapi.dingtalk.com/microApp/getByAppId?access_token=${accessToken}&appId=${clientId}`);
-    const data = await res.json() as { name?: string; agentId?: number; errcode?: number; errmsg?: string };
+    // 调用钉钉新版 API 获取应用信息
+    const res = await fetch(`https://api.dingtalk.com/v1.0/microApp/apps/${clientId}`, {
+      headers: { 
+        "x-acs-dingtalk-access-token": accessToken,
+        "Content-Type": "application/json"
+      }
+    });
+    const data = await res.json() as { name?: string; agentId?: number; appDesc?: string; logo?: string; code?: string; message?: string };
     
-    if (data.errcode !== 0) {
+    if (data.code) {
       // 如果 API 调用失败，返回空名称（用户可以手动设置）
-      console.log(`[dingtalkbot] 获取应用信息失败: ${data.errmsg || JSON.stringify(data)}`);
+      console.log(`[dingtalkbot] 获取应用信息失败: ${data.message || JSON.stringify(data)}`);
       return { name: "" };
     }
     
     const appInfo: AppInfo = {
       name: data.name || "",
-      agentId: data.agentId
+      agentId: data.agentId,
+      description: data.appDesc,
+      logoMediaid: data.logo
     };
     
     // 缓存1小时
