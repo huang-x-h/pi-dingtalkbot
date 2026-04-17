@@ -167,9 +167,9 @@ export default function (pi: ExtensionAPI) {
         // 构造消息，格式：[dingtalkbot] [机器人名] [用户昵称] [messageId]\n内容
         const messageText = `[dingtalkbot] [${botName}] [${senderNick}] [${messageId}]\n${content}`;
         
-        // 发送给 AI 处理
+        // 发送给 AI 处理，如果 agent 正在处理中则排队
         // @ts-ignore
-        await pi.sendUserMessage([{ type: "text", text: messageText }]);
+        await pi.sendUserMessage([{ type: "text", text: messageText }], { deliverAs: "steer" });
         
         // 注意：这里不等待 AI 回复，AI 回复会在 agent_end 事件中处理
       } finally {
