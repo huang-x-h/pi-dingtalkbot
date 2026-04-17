@@ -253,6 +253,9 @@ export default function (pi: ExtensionAPI) {
   // 当前激活的机器人配置（用于发送消息）
   let activeBotConfig: BotConfig | null = null;
   
+  // 当前上下文（用于在回调中更新状态）
+  let currentCtx: ExtensionContext | null = null;
+  
   let client: DWClient | null = null;
   let connected = false;
   let lastMessageId = "";
@@ -308,7 +311,11 @@ export default function (pi: ExtensionAPI) {
   }, 60000);
 
   // Status - 只展示 Bot 名称和连接状态，未配置时隐藏
-  function setStatus(ctx: ExtensionContext, msg?: string) {
+  function setStatus(msg?: string) {
+    // 使用保存的上下文
+    const ctx = currentCtx;
+    if (!ctx) return;
+    
     const active = getActiveBot(globalBots, sessionCfg.activeBotId);
     
     // 如果没有配置机器人，完全隐藏状态栏
@@ -403,6 +410,9 @@ export default function (pi: ExtensionAPI) {
     try {
       disconnect();
 
+      // 保存上下文用于后续更新状态
+      currentCtx = ctx;
+
       console.log(`[dingtalkbot] ⚠️ 提示: 同一机器人只能有一个连接，其他会话将被断开`);
 
       activeBotConfig = bot;
@@ -449,6 +459,8 @@ export default function (pi: ExtensionAPI) {
                 await saveGlobalConfig(globalCfg);
                 globalBots = globalCfg.bots;
                 console.log(`[dingtalkbot] 已获取机器人编码: ${robotCode}`);
+                // 更新状态栏显示
+                setStatus();
               }
             }).catch(err => {
               console.log(`[dingtalkbot] 保存机器人编码失败:`, err);
@@ -490,7 +502,7 @@ ${content}`);
       client.on("connect", () => {
         console.log(`[dingtalkbot] ✅ ${displayName} 已连接`);
         connected = true;
-        setStatus(ctx);
+        setStatus();
       });
 
       // 监听断开连接事件
@@ -506,9 +518,9 @@ ${content}`);
         console.log(`[dingtalkbot] ❌ ${displayName} ${disconnectMsg}${reasonStr ? `: ${reasonStr}` : ""}`);
         
         if (wasConnected && isKicked) {
-          setStatus(ctx, `被其他会话连接 (${SESSION_ID.slice(0, 4)})`);
+          setStatus(`被其他会话连接 (${SESSION_ID.slice(0, 4)})`);
         } else {
-          setStatus(ctx);
+          setStatus();
         }
       });
 
@@ -519,10 +531,10 @@ ${content}`);
         connected = false;
         
         if (errMsg.includes("already connected") || errMsg.includes("connection refused") || errMsg.includes("403")) {
-          setStatus(ctx, "连接被占用");
+          setStatus("连接被占用");
           ctx.ui.notify(`❌ ${displayName} 连接失败：该机器人已在其他会话连接`, "error");
         } else {
-          setStatus(ctx, errMsg);
+          setStatus(errMsg);
         }
       });
 
@@ -532,7 +544,7 @@ ${content}`);
     } catch (err) {
       console.error(`[dingtalkbot] 连接异常:`, err);
       connected = false;
-      setStatus(ctx, "连接异常");
+      setStatus("连接异常");
       return false;
     }
   }
@@ -849,7 +861,7 @@ ClientID: ${active.clientId}
       } else {
         ctx.ui.notify("✅ 本会话已启用，但未选择机器人，请先添加或使用 /dingtalkbot-use 选择", "warning");
       }
-      setStatus(ctx);
+      setStatus();
     },
   });
 
@@ -865,7 +877,7 @@ ClientID: ${active.clientId}
       await saveSessionConfig(sessionCfg);
       disconnect();
       ctx.ui.notify("🔌 本会话已禁用机器人并断开连接", "info");
-      setStatus(ctx);
+      setStatus();
     },
   });
 
@@ -934,7 +946,7 @@ ClientID: ${active.clientId}
         }
       }
       
-      setStatus(ctx);
+      setStatus();
     } catch (err) {
       console.error(`[dingtalkbot] session_start 异常:`, err);
       // 不影响 pi 启动
@@ -954,7 +966,7 @@ ClientID: ${active.clientId}
   }));
 
   pi.on("agent_end", async (e, ctx) => {
-    setStatus(ctx);
+    setStatus();
     if (!lastMessageId || !sessions.has(lastMessageId) || hasReplied) return;
     
     const msg = e.messages[e.messages.length - 1] as any;
