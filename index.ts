@@ -420,6 +420,7 @@ export default function (pi: ExtensionAPI) {
       const displayName = getBotDisplayName(bot);
       console.log(`[dingtalkbot] 连接中: ${displayName}`);
 
+      // @ts-ignore - SDK 类型定义不完整
       client = new DWClient({
         clientId: bot.clientId,
         clientSecret: bot.clientSecret
@@ -427,8 +428,10 @@ export default function (pi: ExtensionAPI) {
 
       // 注册消息处理器
       client.registerAllEventListener((event) => {
+        console.log(`[dingtalkbot] 收到事件: topic=${event.headers?.topic}, type=${event.headers?.eventType}`);
         // 只处理机器人消息
         if (event.headers?.topic !== TOPIC_ROBOT) {
+          console.log(`[dingtalkbot] 非机器人消息，跳过`);
           return { status: EventAck.SUCCESS };
         }
 
