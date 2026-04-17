@@ -310,16 +310,15 @@ export default function (pi: ExtensionAPI) {
     }
   }, 60000);
 
-  // Status - 只展示 Bot 名称和连接状态，未配置时隐藏
+  // Status - 只展示 Bot 名称和连接状态，未使用时不显示
   function setStatus(msg?: string) {
-    // 使用保存的上下文
     const ctx = currentCtx;
     if (!ctx) return;
     
     const active = getActiveBot(globalBots, sessionCfg.activeBotId);
     
-    // 如果没有配置机器人，完全隐藏状态栏
-    if (!active) {
+    // 如果没有配置机器人或未连接，隐藏状态栏
+    if (!active || !connected) {
       ctx.ui.setStatus("dingtalkbot", "");
       return;
     }
@@ -332,9 +331,6 @@ export default function (pi: ExtensionAPI) {
     } else if (connected) {
       // 已连接
       ctx.ui.setStatus("dingtalkbot", `${botName} ✅ ${sessions.size}`);
-    } else {
-      // 未连接
-      ctx.ui.setStatus("dingtalkbot", `${botName} ⚡`);
     }
   }
 
