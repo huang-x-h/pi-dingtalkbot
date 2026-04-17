@@ -327,10 +327,10 @@ export default function (pi: ExtensionAPI) {
     
     if (msg) {
       // 有错误信息时显示
-      ctx.ui.setStatus("dingtalkbot", `${botName} 🔴 ${msg}`);
+      ctx.ui.setStatus("dingtalkbot", `${botName}【dingtalk】 🔴 ${msg}`);
     } else if (connected) {
       // 已连接
-      ctx.ui.setStatus("dingtalkbot", `${botName} ✅ ${sessions.size}`);
+      ctx.ui.setStatus("dingtalkbot", `${botName}【dingtalk】 ✅ ${sessions.size}`);
     }
   }
 
