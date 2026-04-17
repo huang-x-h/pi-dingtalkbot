@@ -545,6 +545,10 @@ ${content}`);
       // 启动连接
       await client.connect();
       console.log(`[dingtalkbot] connect 方法执行完成，调用 setStatus`);
+      // 确保 connected 状态正确
+      if (!connected) {
+        connected = true;
+      }
       setStatus();
       return true;
     } catch (err) {
