@@ -182,69 +182,76 @@ export default function (pi: ExtensionAPI) {
     senderNick: string;
   }>();
 
-  // 消息队列 - 每个钉钉会话一个独立的 Promise
-  let currentProcessingMessageId: string | null = null;
-  let processingPromise: Promise<void> | null = null;
+  // 消息队列 - 使用数组存储待处理消息
+  const messageQueue: Array<{
+    messageId: string;
+    senderNick: string;
+    sessionWebhook: string;
+    content: string;
+    botName: string;
+  }> = [];
+  
+  let isProcessing = false;
   
   // ============================================================================
   // 消息处理核心逻辑
   // ============================================================================
 
-  async function processDingTalkMessage(
+  async function processNextMessage(): Promise<void> {
+    if (isProcessing || messageQueue.length === 0) return;
+    isProcessing = true;
+    
+    const { messageId, senderNick, sessionWebhook, content, botName } = messageQueue.shift()!;
+    
+    try {
+      // 发送思考中提示
+      try { 
+        await sendMessage(sessionWebhook, "text", { content: "🤔 思考中..." }); 
+      } catch {}
+
+      // 构造消息，格式：[dingtalkbot] [机器人名] [用户昵称] [messageId]\n内容
+      const messageText = `[dingtalkbot] [${botName}] [${senderNick}] [${messageId}]\n${content}`;
+      
+      // 发送给 AI 处理，添加重试逻辑
+      let retries = 0;
+      const maxRetries = 5;
+      while (retries < maxRetries) {
+        try {
+          // @ts-ignore
+          await pi.sendUserMessage([{ type: "text", text: messageText }], { deliverAs: "steer" });
+          break; // 成功发送，跳出重试循环
+        } catch (err: any) {
+          if (err?.message?.includes("already processing")) {
+            retries++;
+            console.log(`[dingtalkbot] Agent 忙，${retries}/${maxRetries} 重试...`);
+            await new Promise(r => setTimeout(r, 1000)); // 等待 1 秒
+          } else {
+            // 其他错误，记录并退出
+            console.error(`[dingtalkbot] 发送消息失败:`, err?.message);
+            break;
+          }
+        }
+      }
+      
+      // 注意：这里不等待 AI 回复，AI 回复会在 agent_end 事件中处理
+    } finally {
+      isProcessing = false;
+      // 处理下一条消息
+      if (messageQueue.length > 0) {
+        processNextMessage();
+      }
+    }
+  }
+
+  function queueDingTalkMessage(
     messageId: string,
     senderNick: string,
     sessionWebhook: string,
     content: string,
     botName: string
-  ): Promise<void> {
-    // 等待之前的消息处理完成
-    while (processingPromise) {
-      await processingPromise;
-    }
-
-    currentProcessingMessageId = messageId;
-    
-    // 创建处理 Promise 并存储
-    processingPromise = new Promise<void>(async (resolve) => {
-      try {
-        // 发送思考中提示
-        try { 
-          await sendMessage(sessionWebhook, "text", { content: "🤔 思考中..." }); 
-        } catch {}
-
-        // 构造消息，格式：[dingtalkbot] [机器人名] [用户昵称] [messageId]\n内容
-        const messageText = `[dingtalkbot] [${botName}] [${senderNick}] [${messageId}]\n${content}`;
-        
-        // 发送给 AI 处理，添加重试逻辑
-        let retries = 0;
-        const maxRetries = 5;
-        while (retries < maxRetries) {
-          try {
-            // @ts-ignore
-            await pi.sendUserMessage([{ type: "text", text: messageText }], { deliverAs: "steer" });
-            break; // 成功发送，跳出重试循环
-          } catch (err: any) {
-            if (err?.message?.includes("already processing")) {
-              retries++;
-              console.log(`[dingtalkbot] Agent 忙，${retries}/${maxRetries} 重试...`);
-              await new Promise(r => setTimeout(r, 1000)); // 等待 1 秒
-            } else {
-              // 其他错误，记录并退出
-              console.error(`[dingtalkbot] 发送消息失败:`, err?.message);
-              break;
-            }
-          }
-        }
-        
-        // 注意：这里不等待 AI 回复，AI 回复会在 agent_end 事件中处理
-      } finally {
-        if (currentProcessingMessageId === messageId) {
-          currentProcessingMessageId = null;
-        }
-        processingPromise = null;
-        resolve();
-      }
-    });
+  ): void {
+    messageQueue.push({ messageId, senderNick, sessionWebhook, content, botName });
+    processNextMessage();
   }
 
   // ============================================================================
@@ -344,7 +351,7 @@ export default function (pi: ExtensionAPI) {
           }
 
           // 异步处理消息（不阻塞回调）
-          processDingTalkMessage(messageId, senderNick, sessionWebhook, content, botName);
+          queueDingTalkMessage(messageId, senderNick, sessionWebhook, content, botName);
 
           return { status: EventAck.SUCCESS };
         } catch (err) {
@@ -397,9 +404,8 @@ export default function (pi: ExtensionAPI) {
 
   function disconnect() {
     dingTalkSessions.clear();
-    pendingMessages.clear();
-    currentProcessingMessageId = null;
-    processingPromise = null;
+    messageQueue.length = 0;
+    isProcessing = false;
     
     if (client) { 
       try { client.disconnect(); } catch {}
@@ -407,6 +413,19 @@ export default function (pi: ExtensionAPI) {
     }
     connected = false;
     activeBotConfig = null;
+  }
+
+  // 获取最近的未回复会话
+  function getLatestSession(): DingTalkSession | null {
+    let latest: DingTalkSession | null = null;
+    for (const session of dingTalkSessions.values()) {
+      if (!session.hasReplied) {
+        if (!latest || session.timestamp > latest.timestamp) {
+          latest = session;
+        }
+      }
+    }
+    return latest;
   }
 
   // ============================================================================
@@ -424,9 +443,9 @@ export default function (pi: ExtensionAPI) {
     async execute(_id, p) {
       if (!client || !connected) throw new Error("机器人未连接");
       
-      // 优先使用指定的 messageId，否则使用正在处理的消息
-      const targetMsgId = p.messageId || currentProcessingMessageId;
-      const session = targetMsgId ? dingTalkSessions.get(targetMsgId) : null;
+      // 优先使用指定的 messageId，否则使用最近的会话
+      const targetMsgId = p.messageId;
+      const session = targetMsgId ? dingTalkSessions.get(targetMsgId) : getLatestSession();
       if (!session) throw new Error("无活跃会话");
       
       const files: string[] = [];
@@ -453,9 +472,9 @@ export default function (pi: ExtensionAPI) {
     async execute(_id, p) {
       if (!client || !connected) throw new Error("机器人未连接");
       
-      // 优先使用指定的 messageId，否则使用正在处理的消息
-      const targetMsgId = p.messageId || currentProcessingMessageId;
-      const session = targetMsgId ? dingTalkSessions.get(targetMsgId) : null;
+      // 优先使用指定的 messageId，否则使用最近的会话
+      const targetMsgId = p.messageId;
+      const session = targetMsgId ? dingTalkSessions.get(targetMsgId) : getLatestSession();
       if (!session) throw new Error("无活跃会话");
       
       if (p.format === "markdown") {
