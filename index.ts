@@ -501,9 +501,10 @@ ${content}`);
 
       // 监听连接成功事件
       client.on("connect", () => {
-        console.log(`[dingtalkbot] ✅ ${displayName} 已连接`);
+        console.log(`[dingtalkbot] ✅ ${displayName} 已连接，调用 setStatus`);
         connected = true;
         setStatus();
+        console.log(`[dingtalkbot] setStatus 调用完成，currentCtx=${!!currentCtx}`);
       });
 
       // 监听断开连接事件
