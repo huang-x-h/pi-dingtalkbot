@@ -544,6 +544,8 @@ ${content}`);
 
       // 启动连接
       await client.connect();
+      console.log(`[dingtalkbot] connect 方法执行完成，调用 setStatus`);
+      setStatus();
       return true;
     } catch (err) {
       console.error(`[dingtalkbot] 连接异常:`, err);
