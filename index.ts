@@ -66,15 +66,7 @@ interface DingTalkToken {
   expireTime: number;
 }
 
-interface AppInfo {
-  name: string;
-  agentId?: number;
-  logoMediaid?: string;
-  description?: string;
-}
-
 let cachedToken: DingTalkToken | null = null;
-let cachedAppInfo: Map<string, AppInfo & { expireTime: number }> = new Map();
 
 // 获取 Access Token
 async function getAccessToken(clientId: string, clientSecret: string): Promise<string> {
@@ -97,64 +89,6 @@ async function getAccessToken(clientId: string, clientSecret: string): Promise<s
   };
   
   return cachedToken.accessToken;
-}
-
-// 获取 Access Token (新版 API)
-async function getDingTalkAccessToken(clientId: string, clientSecret: string): Promise<string> {
-  const res = await fetch(`https://api.dingtalk.com/v1.0/oauth2/accessToken`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ appKey: clientId, appSecret: clientSecret })
-  });
-  const data = await res.json() as { accessToken?: string; expireIn?: number; code?: string; message?: string };
-  
-  if (data.accessToken) {
-    return data.accessToken;
-  }
-  throw new Error(`获取 AccessToken 失败: ${data.message || JSON.stringify(data)}`);
-}
-
-// 获取应用信息（包含名称）
-async function getAppInfo(clientId: string, clientSecret: string): Promise<AppInfo> {
-  // 检查缓存（应用信息缓存1小时）
-  const cached = cachedAppInfo.get(clientId);
-  if (cached && cached.expireTime > Date.now() + 60000) {
-    return { name: cached.name, agentId: cached.agentId, logoMediaid: cached.logoMediaid, description: cached.description };
-  }
-  
-  try {
-    const accessToken = await getDingTalkAccessToken(clientId, clientSecret);
-    
-    // 调用钉钉新版 API 获取应用信息
-    const res = await fetch(`https://api.dingtalk.com/v1.0/microApp/apps/${clientId}`, {
-      headers: { 
-        "x-acs-dingtalk-access-token": accessToken,
-        "Content-Type": "application/json"
-      }
-    });
-    const data = await res.json() as { name?: string; agentId?: number; appDesc?: string; logo?: string; code?: string; message?: string };
-    
-    if (data.code) {
-      // 如果 API 调用失败，返回空名称（用户可以手动设置）
-      console.log(`[dingtalkbot] 获取应用信息失败: ${data.message || JSON.stringify(data)}`);
-      return { name: "" };
-    }
-    
-    const appInfo: AppInfo = {
-      name: data.name || "",
-      agentId: data.agentId,
-      description: data.appDesc,
-      logoMediaid: data.logo
-    };
-    
-    // 缓存1小时
-    cachedAppInfo.set(clientId, { ...appInfo, expireTime: Date.now() + 60 * 60 * 1000 });
-    
-    return appInfo;
-  } catch (err) {
-    console.log(`[dingtalkbot] 获取应用信息异常:`, err);
-    return { name: "" };
-  }
 }
 
 // 发送消息到钉钉
@@ -291,7 +225,8 @@ function getBotById(bots: BotConfig[], clientId: string): BotConfig | undefined 
 
 // 获取机器人显示名称
 function getBotDisplayName(bot: BotConfig): string {
-  return bot.name || bot.clientId.slice(0, 8) + "...";
+  // 优先使用用户设置的名称，否则显示完整的 ClientID
+  return bot.name || bot.clientId;
 }
 
 // ============================================================================
@@ -469,32 +404,7 @@ export default function (pi: ExtensionAPI) {
 
       console.log(`[dingtalkbot] ⚠️ 提示: 同一机器人只能有一个连接，其他会话将被断开`);
 
-      // 尝试自动获取机器人名称
-      if (!bot.name) {
-        try {
-          const appInfo = await getAppInfo(bot.clientId, bot.clientSecret);
-          if (appInfo.name) {
-            // 更新机器人名称
-            bot.name = appInfo.name;
-            // 保存到全局配置
-            const globalCfg = await loadGlobalConfig();
-            const idx = globalCfg.bots.findIndex(b => b.clientId === bot.clientId);
-            if (idx !== -1) {
-              globalCfg.bots[idx].name = appInfo.name;
-              await saveGlobalConfig(globalCfg);
-              globalBots = globalCfg.bots;
-              console.log(`[dingtalkbot] 已自动获取机器人名称: ${appInfo.name}`);
-            }
-          }
-        } catch (err) {
-          console.log(`[dingtalkbot] 自动获取机器人名称失败，将使用 ClientID`);
-        }
-      }
-
-      // 更新 activeBotConfig 为最新的 bot（包含获取到的名称）
       activeBotConfig = bot;
-
-      // 获取显示名称（必须在获取名称之后）
       const displayName = getBotDisplayName(bot);
       console.log(`[dingtalkbot] 连接中: ${displayName}`);
 
