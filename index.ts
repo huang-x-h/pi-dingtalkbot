@@ -215,9 +215,26 @@ export default function (pi: ExtensionAPI) {
         // 构造消息，格式：[dingtalkbot] [机器人名] [用户昵称] [messageId]\n内容
         const messageText = `[dingtalkbot] [${botName}] [${senderNick}] [${messageId}]\n${content}`;
         
-        // 发送给 AI 处理，如果 agent 正在处理中则排队
-        // @ts-ignore
-        await pi.sendUserMessage([{ type: "text", text: messageText }], { deliverAs: "steer" });
+        // 发送给 AI 处理，添加重试逻辑
+        let retries = 0;
+        const maxRetries = 5;
+        while (retries < maxRetries) {
+          try {
+            // @ts-ignore
+            await pi.sendUserMessage([{ type: "text", text: messageText }], { deliverAs: "steer" });
+            break; // 成功发送，跳出重试循环
+          } catch (err: any) {
+            if (err?.message?.includes("already processing")) {
+              retries++;
+              console.log(`[dingtalkbot] Agent 忙，${retries}/${maxRetries} 重试...`);
+              await new Promise(r => setTimeout(r, 1000)); // 等待 1 秒
+            } else {
+              // 其他错误，记录并退出
+              console.error(`[dingtalkbot] 发送消息失败:`, err?.message);
+              break;
+            }
+          }
+        }
         
         // 注意：这里不等待 AI 回复，AI 回复会在 agent_end 事件中处理
       } finally {
