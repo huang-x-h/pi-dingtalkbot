@@ -54,6 +54,7 @@ interface Session {
   senderNick: string;
   timestamp: number;
   botId: string;
+  robotCode: string;  // 机器人编码
   sessionWebhook: string;
 }
 
@@ -434,9 +435,30 @@ export default function (pi: ExtensionAPI) {
           const senderNick = message.senderNick || "未知用户";
           const conversationId = message.conversationId || "";
           const sessionWebhook = message.sessionWebhook || "";
+          const robotCode = message.robotCode || "";
           const botId = bot.clientId;
 
-          console.log(`[dingtalkbot] [${displayName}] [${senderNick}] ${content.slice(0, 50)}...`);
+          // 如果没有设置名称且收到消息中有 robotCode，尝试用它（异步保存）
+          if (!bot.name && robotCode) {
+            bot.name = robotCode;
+            // 异步保存到全局配置
+            loadGlobalConfig().then(async (globalCfg) => {
+              const idx = globalCfg.bots.findIndex(b => b.clientId === bot.clientId);
+              if (idx !== -1) {
+                globalCfg.bots[idx].name = robotCode;
+                await saveGlobalConfig(globalCfg);
+                globalBots = globalCfg.bots;
+                console.log(`[dingtalkbot] 已获取机器人编码: ${robotCode}`);
+              }
+            }).catch(err => {
+              console.log(`[dingtalkbot] 保存机器人编码失败:`, err);
+            });
+          }
+
+          // 获取当前机器人的显示名称
+          const currentBotName = bot.name || robotCode || bot.clientId;
+
+          console.log(`[dingtalkbot] [${currentBotName}] [${senderNick}] ${content.slice(0, 50)}...`);
 
           sessions.set(messageId, { 
             messageId, 
@@ -445,6 +467,7 @@ export default function (pi: ExtensionAPI) {
             senderNick,
             timestamp: Date.now(), 
             botId,
+            robotCode,
             sessionWebhook
           });
           lastMessageId = messageId;
@@ -454,7 +477,7 @@ export default function (pi: ExtensionAPI) {
           sendThinkingMessage(messageId);
           
           // 队列消息给 AI 处理
-          queueMessage(`[dingtalkbot] [${displayName}] [${senderNick}]
+          queueMessage(`[dingtalkbot] [${currentBotName}] [${senderNick}]
 ${content}`);
         } catch (err) {
           console.error('[dingtalkbot] 解析消息失败:', err);
