@@ -165,6 +165,10 @@ export default function (pi: ExtensionAPI) {
     botName: string;
   }> = [];
 
+  // 消息超时跟踪（防止 agent_end 不触发导致卡住）
+  const messageTimeouts = new Map<string, NodeJS.Timeout>();
+  const MESSAGE_TIMEOUT = 5 * 60 * 1000; // 5分钟超时
+
   // 当前正在处理的消息ID（用于等待处理完成）
   let currentProcessingMessageId: string | null = null;
   let isProcessing = false;
@@ -195,6 +199,20 @@ export default function (pi: ExtensionAPI) {
         // @ts-ignore
         await pi.sendUserMessage([{ type: "text", text: messageText }], { deliverAs: "steer" });
         console.log(`[dingtalkbot] 已发送给 pi，等待处理完成...`);
+        
+        // 设置超时保护（防止 agent_end 不触发导致卡住）
+        const timeoutId = setTimeout(() => {
+          console.log(`[dingtalkbot] 消息 ${messageId.slice(0, 8)}... 处理超时`);
+          if (currentProcessingMessageId === messageId) {
+            isProcessing = false;
+            currentProcessingMessageId = null;
+            dingTalkSessions.delete(messageId);
+            messageTimeouts.delete(messageId);
+            processNextMessage();
+          }
+        }, MESSAGE_TIMEOUT);
+        messageTimeouts.set(messageId, timeoutId);
+        
       } catch (err) {
         console.error('[dingtalkbot] 发送给 pi 失败:', err);
         // 发送失败，继续处理下一条
@@ -612,6 +630,14 @@ export default function (pi: ExtensionAPI) {
     // 如果当前处理的消息已完成，继续处理下一条
     if (messageId && messageId === currentProcessingMessageId) {
       console.log(`[dingtalkbot] 消息 ${messageId.slice(0, 8)}... 处理完成，继续下一条`);
+      
+      // 清除超时定时器
+      const timeoutId = messageTimeouts.get(messageId);
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+        messageTimeouts.delete(messageId);
+      }
+      
       isProcessing = false;
       currentProcessingMessageId = null;
       // 触发下一条消息处理
