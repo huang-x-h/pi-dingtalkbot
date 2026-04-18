@@ -175,10 +175,24 @@ export default function (pi: ExtensionAPI) {
 
   // 处理队列中下一条消息
   async function processNextMessage(): Promise<void> {
-    if (isProcessing || messageQueue.length === 0) return;
+    console.log(`[dingtalkbot] processNextMessage 被调用, isProcessing=${isProcessing}, queueLength=${messageQueue.length}`);
+    
+    if (isProcessing) {
+      console.log(`[dingtalkbot] 正在处理中，跳过`);
+      return;
+    }
+    
+    if (messageQueue.length === 0) {
+      console.log(`[dingtalkbot] 队列为空，跳过`);
+      return;
+    }
     
     isProcessing = true;
-    const { messageId, senderNick, sessionWebhook, content, botName } = messageQueue.shift()!;
+    const msg = messageQueue.shift()!;
+    const { messageId, senderNick, sessionWebhook, content, botName } = msg;
+    
+    console.log(`[dingtalkbot] 开始处理消息 ${messageId.slice(0, 8)}..., 队列剩余: ${messageQueue.length}`);
+    
     currentProcessingMessageId = messageId;
     
     try {
