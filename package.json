@@ -37,6 +37,11 @@
     "dingtalk-stream": "^2.0.0"
   },
   "devDependencies": {
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "vitest": "^1.0.0"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
   }
 }
