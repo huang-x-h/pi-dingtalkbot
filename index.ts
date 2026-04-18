@@ -192,7 +192,10 @@ export default function (pi: ExtensionAPI) {
             timestamp: Date.now()
           });
 
-          // 直接转发给 pi 处理（不做排队，pi 自己管理会话）
+          // 先发送"思考中..."提示（让用户感知到正在处理）
+          sendMessage(sessionWebhook, "text", { content: "🤔 思考中..." }).catch(() => {});
+
+          // 再转发给 pi 处理（pi 自己管理会话）
           const messageText = `[dingtalkbot] [${botName}] [${senderNick}] [${messageId}]\n${content}`;
           
           // @ts-ignore
