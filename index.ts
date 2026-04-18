@@ -156,6 +156,61 @@ export default function (pi: ExtensionAPI) {
   // 钉钉会话映射表 - 用于回复时找到对应的 webhook
   const dingTalkSessions = new Map<string, DingTalkSession>();
 
+  // 消息队列 - 等待发送给 pi 的消息
+  const messageQueue: Array<{
+    messageId: string;
+    senderNick: string;
+    sessionWebhook: string;
+    content: string;
+    botName: string;
+  }> = [];
+
+  // 当前正在处理的消息ID（用于等待处理完成）
+  let currentProcessingMessageId: string | null = null;
+  let isProcessing = false;
+
+  // 处理队列中下一条消息
+  async function processNextMessage(): Promise<void> {
+    if (isProcessing || messageQueue.length === 0) return;
+    
+    isProcessing = true;
+    const { messageId, senderNick, sessionWebhook, content, botName } = messageQueue.shift()!;
+    currentProcessingMessageId = messageId;
+    
+    try {
+      console.log(`[dingtalkbot] 发送消息给 pi [${messageId.slice(0, 8)}...]`);
+      
+      // 存储会话上下文
+      dingTalkSessions.set(messageId, {
+        messageId,
+        senderNick,
+        sessionWebhook,
+        timestamp: Date.now()
+      });
+
+      // 发送给 pi 处理
+      const messageText = `[dingtalkbot] [${botName}] [${senderNick}] [${messageId}]\n${content}`;
+      
+      try {
+        // @ts-ignore
+        await pi.sendUserMessage([{ type: "text", text: messageText }], { deliverAs: "steer" });
+        console.log(`[dingtalkbot] 已发送给 pi，等待处理完成...`);
+      } catch (err) {
+        console.error('[dingtalkbot] 发送给 pi 失败:', err);
+        // 发送失败，继续处理下一条
+        isProcessing = false;
+        currentProcessingMessageId = null;
+        processNextMessage();
+      }
+    } catch (err) {
+      console.error('[dingtalkbot] 处理消息失败:', err);
+      isProcessing = false;
+      currentProcessingMessageId = null;
+      processNextMessage();
+    }
+    // 注意：isProcessing 保持 true，直到 agent_end 处理完成
+  }
+
   // ============================================================================
   // Connection
   // ============================================================================
@@ -184,28 +239,12 @@ export default function (pi: ExtensionAPI) {
 
           console.log(`[dingtalkbot] [${botName}] [${senderNick}] content=${content.slice(0, 30)}...`);
 
-          // 存储会话上下文（用于回复）
-          dingTalkSessions.set(messageId, {
-            messageId,
-            senderNick,
-            sessionWebhook,
-            timestamp: Date.now()
-          });
+          // 消息入队，等待顺序处理
+          messageQueue.push({ messageId, senderNick, sessionWebhook, content, botName });
+          console.log(`[dingtalkbot] 消息入队 [${messageId.slice(0, 8)}...] 队列长度: ${messageQueue.length}`);
 
-          // 先发送"思考中..."提示（让用户感知到正在处理）
-          try {
-            await sendMessage(sessionWebhook, "text", { content: "🤔 思考中..." });
-          } catch {}
-
-          // 再转发给 pi 处理（pi 自己管理会话）
-          const messageText = `[dingtalkbot] [${botName}] [${senderNick}] [${messageId}]\n${content}`;
-          
-          try {
-            // @ts-ignore
-            await pi.sendUserMessage([{ type: "text", text: messageText }], { deliverAs: "steer" });
-          } catch (err) {
-            console.error('[dingtalkbot] 发送给 pi 失败:', err);
-          }
+          // 启动处理（如果尚未在处理）
+          processNextMessage();
 
           return { status: EventAck.SUCCESS };
         } catch (err) {
@@ -568,6 +607,17 @@ export default function (pi: ExtensionAPI) {
       console.log(`[dingtalkbot] 回复 [${session.senderNick}]: ${content.slice(0, 50)}`);
       // 回复后删除会话记录
       dingTalkSessions.delete(session.messageId);
+    }
+    
+    // 如果当前处理的消息已完成，继续处理下一条
+    if (messageId && messageId === currentProcessingMessageId) {
+      console.log(`[dingtalkbot] 消息 ${messageId.slice(0, 8)}... 处理完成，继续下一条`);
+      isProcessing = false;
+      currentProcessingMessageId = null;
+      // 触发下一条消息处理
+      if (messageQueue.length > 0) {
+        processNextMessage();
+      }
     }
   });
 }
