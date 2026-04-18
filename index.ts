@@ -627,15 +627,26 @@ export default function (pi: ExtensionAPI) {
       dingTalkSessions.delete(session.messageId);
     }
     
+    // 调试日志：显示提取结果
+    console.log(`[dingtalkbot] agent_end: extracted messageId=${messageId}, current=${currentProcessingMessageId}, isProcessing=${isProcessing}`);
+    
     // 如果当前处理的消息已完成，继续处理下一条
-    if (messageId && messageId === currentProcessingMessageId) {
-      console.log(`[dingtalkbot] 消息 ${messageId.slice(0, 8)}... 处理完成，继续下一条`);
+    // 条件1：messageId 匹配（正常情况）
+    // 条件2：isProcessing 为 true 且队列中有消息（兜底，防止卡住）
+    const shouldContinue = (messageId && messageId === currentProcessingMessageId) || 
+                           (isProcessing && messageQueue.length > 0);
+    
+    if (shouldContinue) {
+      const completedId = messageId || currentProcessingMessageId;
+      console.log(`[dingtalkbot] 消息 ${completedId?.slice(0, 8)}... 处理完成，继续下一条，队列剩余: ${messageQueue.length}`);
       
       // 清除超时定时器
-      const timeoutId = messageTimeouts.get(messageId);
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-        messageTimeouts.delete(messageId);
+      if (completedId) {
+        const timeoutId = messageTimeouts.get(completedId);
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+          messageTimeouts.delete(completedId);
+        }
       }
       
       isProcessing = false;
@@ -644,6 +655,8 @@ export default function (pi: ExtensionAPI) {
       if (messageQueue.length > 0) {
         processNextMessage();
       }
+    } else {
+      console.log(`[dingtalkbot] 不继续处理: messageId=${messageId}, current=${currentProcessingMessageId}, isProcessing=${isProcessing}, queue=${messageQueue.length}`);
     }
   });
 }
