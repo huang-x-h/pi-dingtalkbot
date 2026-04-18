@@ -193,15 +193,19 @@ export default function (pi: ExtensionAPI) {
           });
 
           // 先发送"思考中..."提示（让用户感知到正在处理）
-          sendMessage(sessionWebhook, "text", { content: "🤔 思考中..." }).catch(() => {});
+          try {
+            await sendMessage(sessionWebhook, "text", { content: "🤔 思考中..." });
+          } catch {}
 
           // 再转发给 pi 处理（pi 自己管理会话）
           const messageText = `[dingtalkbot] [${botName}] [${senderNick}] [${messageId}]\n${content}`;
           
-          // @ts-ignore
-          pi.sendUserMessage([{ type: "text", text: messageText }], { deliverAs: "steer" }).catch(err => {
+          try {
+            // @ts-ignore
+            await pi.sendUserMessage([{ type: "text", text: messageText }], { deliverAs: "steer" });
+          } catch (err) {
             console.error('[dingtalkbot] 发送给 pi 失败:', err);
-          });
+          }
 
           return { status: EventAck.SUCCESS };
         } catch (err) {
