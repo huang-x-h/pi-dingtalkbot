@@ -1015,18 +1015,17 @@ export default function (pi: ExtensionAPI) {
       // 回复后删除会话记录
       dingTalkSessions.delete(session.messageId);
       
-      // 【增强3】清除进度通知定时器
-      if (messageId) {
-        const timeoutId = messageTimeouts.get(messageId);
-        if (timeoutId) {
-          clearTimeout(timeoutId);
-          messageTimeouts.delete(messageId);
+      // 【增强3】清除进度通知（使用 session.messageId 确保清理）
+      const msgId = session.messageId;
+      if (msgId) {
+        // 清除定时器
+        const progressInterval = messageTimeouts.get(msgId + '_progress');
+        if (progressInterval) {
+          clearInterval(progressInterval);
+          messageTimeouts.delete(msgId + '_progress');
         }
-        const progressTimeoutId = messageTimeouts.get(messageId + '_progress');
-        if (progressTimeoutId) {
-          clearTimeout(progressTimeoutId);
-          messageTimeouts.delete(messageId + '_progress');
-        }
+        // 清除已发送通知记录
+        notifiedPoints.delete(msgId);
       }
       
       // 【增强3】继续处理该会话的下一条消息
