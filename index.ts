@@ -37,7 +37,19 @@ interface DingTalkSession {
   messageId: string;      // 消息ID
   senderNick: string;      // 发送者昵称
   sessionWebhook: string;  // 会话 Webhook
+  conversationId?: string; // 会话ID（用于关联主动发送的消息）
   timestamp: number;       // 最后活跃时间
+}
+
+// 等待回复的状态
+interface PendingReply {
+  messageId: string;        // 主动发送的消息ID
+  conversationId: string;   // 会话ID
+  content: string;          // 发送内容
+  timestamp: number;        // 发送时间
+  timeout: NodeJS.Timeout;  // 超时定时器
+  resolve: (value: { reply: string; message: any }) => void;  // 成功回调
+  reject: (reason: Error) => void;  // 失败回调
 }
 
 // ============================================================================
@@ -156,7 +168,18 @@ export default function (pi: ExtensionAPI) {
   // 钉钉会话映射表 - 用于回复时找到对应的 webhook
   const dingTalkSessions = new Map<string, DingTalkSession>();
 
-  // 消息队列 - 等待发送给 pi 的消息
+  // 【增强3】会话独立队列 - 按会话分组，不同用户独立处理
+  const sessionQueues = new Map<string, Array<{
+    messageId: string;
+    senderNick: string;
+    sessionWebhook: string;
+    content: string;
+    botName: string;
+    timestamp: number;
+  }>>();
+  const sessionProcessing = new Map<string, boolean>();
+
+  // 兼容旧接口 - 保留全局队列用于某些场景
   const messageQueue: Array<{
     messageId: string;
     senderNick: string;
@@ -165,13 +188,232 @@ export default function (pi: ExtensionAPI) {
     botName: string;
   }> = [];
 
+  // 等待回复的状态存储
+  const pendingReplies = new Map<string, PendingReply>();
+  const PENDING_CLEANUP_INTERVAL = 60 * 1000; // 1分钟清理一次
+
   // 消息超时跟踪（防止 agent_end 不触发导致卡住）
   const messageTimeouts = new Map<string, NodeJS.Timeout>();
   const MESSAGE_TIMEOUT = 5 * 60 * 1000; // 5分钟超时
 
+  // 已处理的消息ID（用于去重，防止同一消息被处理多次）
+  const processedMessages = new Set<string>();
+  const PROCESSED_CLEANUP_INTERVAL = 60 * 1000; // 1分钟清理一次
+  const PROCESSED_MESSAGE_TTL = 10 * 60 * 1000; // 10分钟后从记录中移除
+
   // 当前正在处理的消息ID（用于等待处理完成）
   let currentProcessingMessageId: string | null = null;
   let isProcessing = false;
+
+  // 【增强2】处理进度通知 - 10秒后发送进度提示
+  const PROGRESS_NOTIFY_DELAY = 10 * 1000; // 10秒
+
+  // 获取指定会话的队列长度（前面还有几条消息）
+  function getSessionQueueLength(conversationId: string): number {
+    return sessionQueues.get(conversationId)?.length || 0;
+  }
+
+  // 会话是否正在处理
+  function isSessionProcessing(conversationId: string): boolean {
+    return sessionProcessing.get(conversationId) || false;
+  }
+
+  // 设置会话处理状态
+  function setSessionProcessing(conversationId: string, processing: boolean) {
+    sessionProcessing.set(conversationId, processing);
+  }
+
+  // 生成唯一消息ID
+  function generateMessageId(): string {
+    return `msg-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`;
+  }
+
+  // 从 webhook 提取会话标识
+  function extractConversationId(webhook: string): string {
+    // webhook 格式: https://oapi.dingtalk.com/robot/send?access_token=xxx
+    // 使用 access_token 作为会话标识
+    const match = webhook.match(/access_token=([^&]+)/);
+    return match?.[1] || webhook;
+  }
+
+  // 查找会话是否有等待中的回复
+  function hasPendingReply(conversationId: string): boolean {
+    for (const pending of pendingReplies.values()) {
+      if (pending.conversationId === conversationId) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // 查找并处理匹配的待回复
+  function handlePendingReply(conversationId: string, content: string, message: any): boolean {
+    for (const [id, pending] of pendingReplies) {
+      if (pending.conversationId === conversationId) {
+        clearTimeout(pending.timeout);
+        pendingReplies.delete(id);
+        pending.resolve({ reply: content, message });
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // 清理超时的待回复
+  function cleanupPendingReplies() {
+    const now = Date.now();
+    const TIMEOUT = 5 * 60 * 1000; // 5分钟超时
+    for (const [id, pending] of pendingReplies) {
+      if (now - pending.timestamp > TIMEOUT) {
+        clearTimeout(pending.timeout);
+        pendingReplies.delete(id);
+        pending.reject(new Error("等待回复超时"));
+      }
+    }
+  }
+
+  // 启动定期清理
+  const cleanupInterval = setInterval(cleanupPendingReplies, PENDING_CLEANUP_INTERVAL);
+
+  // 清理已处理消息记录
+  function cleanupProcessedMessages() {
+    // 定期清理过期的已处理记录，防止内存泄漏
+    // 注意：这里只是简单记录，10分钟后自动过期
+  }
+
+  // 检查消息是否已处理过
+  function isMessageProcessed(messageId: string): boolean {
+    return processedMessages.has(messageId);
+  }
+
+  // 标记消息已处理
+  function markMessageProcessed(messageId: string) {
+    processedMessages.add(messageId);
+    // 10分钟后自动移除（简化处理，不使用额外定时器）
+    setTimeout(() => {
+      processedMessages.delete(messageId);
+    }, PROCESSED_MESSAGE_TTL);
+  }
+
+  // 【增强2】发送处理进度通知
+  async function sendProgressNotification(
+    messageId: string,
+    sessionWebhook: string,
+    senderNick: string
+  ): Promise<void> {
+    if (currentProcessingMessageId !== messageId) return; // 消息已被处理完
+    
+    console.log(`[dingtalkbot] 发送进度通知给 [${senderNick}]`);
+    await sendReply(sessionWebhook, `⏳ 还在处理中，请稍候...`);
+  }
+
+  // 【增强3】处理队列中下一条消息（会话独立版）
+  async function processNextForSession(conversationId: string): Promise<void> {
+    const queue = sessionQueues.get(conversationId);
+    if (!queue || queue.length === 0) return;
+    
+    // 该会话是否正在处理
+    if (isSessionProcessing(conversationId)) return;
+    setSessionProcessing(conversationId, true);
+    
+    const msg = queue.shift()!;
+    const { messageId, senderNick, sessionWebhook, content, botName } = msg;
+    
+    currentProcessingMessageId = messageId;
+    isProcessing = true;
+    
+    try {
+      // 存储会话上下文
+      dingTalkSessions.set(messageId, {
+        messageId,
+        senderNick,
+        sessionWebhook,
+        conversationId,
+        timestamp: Date.now()
+      });
+
+      // 发送给 pi 处理
+      const messageText = `[dingtalkbot] [${botName}] [${senderNick}] [${messageId}]\n${content}`;
+      
+      try {
+        // @ts-ignore
+        await pi.sendUserMessage([{ type: "text", text: messageText }], { deliverAs: "steer" });
+        
+        // 设置进度通知定时器（10秒后发送）
+        const progressTimeoutId = setTimeout(() => {
+          sendProgressNotification(messageId, sessionWebhook, senderNick);
+        }, PROGRESS_NOTIFY_DELAY);
+        messageTimeouts.set(messageId + '_progress', progressTimeoutId);
+        
+        // 设置超时保护（防止 agent_end 不触发导致卡住）
+        const timeoutId = setTimeout(() => {
+          console.log(`[dingtalkbot] 消息 ${messageId.slice(0, 8)}... 处理超时`);
+          if (currentProcessingMessageId === messageId) {
+            isProcessing = false;
+            currentProcessingMessageId = null;
+            dingTalkSessions.delete(messageId);
+            messageTimeouts.delete(messageId);
+            messageTimeouts.delete(messageId + '_progress');
+            setSessionProcessing(conversationId, false);
+            // 继续处理该会话的下一条消息
+            processNextForSession(conversationId);
+          }
+        }, MESSAGE_TIMEOUT);
+        messageTimeouts.set(messageId, timeoutId);
+        
+      } catch (err) {
+        console.error('[dingtalkbot] 发送给 pi 失败:', err);
+        isProcessing = false;
+        currentProcessingMessageId = null;
+        setSessionProcessing(conversationId, false);
+        processNextForSession(conversationId);
+      }
+    } catch (err) {
+      console.error('[dingtalkbot] 处理消息失败:', err);
+      isProcessing = false;
+      currentProcessingMessageId = null;
+      setSessionProcessing(conversationId, false);
+      processNextForSession(conversationId);
+    }
+  }
+
+  // 发送消息并等待回复
+  async function sendAndWait(
+    sessionWebhook: string,
+    content: string,
+    options?: { timeout?: number }
+  ): Promise<{ reply: string; message: any }> {
+    const conversationId = extractConversationId(sessionWebhook);
+    
+    // 检查是否已有等待中的回复
+    if (hasPendingReply(conversationId)) {
+      throw new Error("该会话已有等待中的消息，请等待用户回复或取消等待");
+    }
+
+    const msgId = generateMessageId();
+    
+    // 先发送消息
+    await sendReply(sessionWebhook, content);
+    
+    return new Promise((resolve, reject) => {
+      const timeoutMs = (options?.timeout || 300) * 1000; // 默认5分钟
+      
+      const timeout = setTimeout(() => {
+        pendingReplies.delete(msgId);
+        reject(new Error(`等待回复超时（${options?.timeout || 300}秒）`));
+      }, timeoutMs);
+      
+      pendingReplies.set(msgId, {
+        messageId: msgId,
+        conversationId,
+        content,
+        timestamp: Date.now(),
+        timeout,
+        resolve,
+        reject
+      });
+    });
+  }
 
   // 处理队列中下一条消息
   async function processNextMessage(): Promise<void> {
@@ -185,11 +427,13 @@ export default function (pi: ExtensionAPI) {
     currentProcessingMessageId = messageId;
     
     try {
+      const conversationId = extractConversationId(sessionWebhook);
       // 存储会话上下文
       dingTalkSessions.set(messageId, {
         messageId,
         senderNick,
         sessionWebhook,
+        conversationId,
         timestamp: Date.now()
       });
 
@@ -250,19 +494,53 @@ export default function (pi: ExtensionAPI) {
           const content = message?.text?.content;
           if (!content) return { status: EventAck.SUCCESS };
 
-          const messageId = message.msgId || `${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+          const messageId = message.msgId || generateMessageId();
           const senderNick = message.senderNick || "未知用户";
           const sessionWebhook = message.sessionWebhook || "";
+          const conversationId = message.conversationId || extractConversationId(sessionWebhook);
           const botName = getBotDisplayName(bot);
+
+          // 检查是否有等待该会话回复的消息
+          if (handlePendingReply(conversationId, content, message)) {
+            console.log(`[dingtalkbot] [${botName}] [${senderNick}] 回复等待中的消息: ${content.slice(0, 30)}...`);
+            return { status: EventAck.SUCCESS };
+          }
 
           console.log(`[dingtalkbot] [${botName}] [${senderNick}] content=${content.slice(0, 30)}...`);
 
-          // 消息入队，等待顺序处理
-          messageQueue.push({ messageId, senderNick, sessionWebhook, content, botName });
-          console.log(`[dingtalkbot] 消息入队 [${messageId.slice(0, 8)}...] 队列长度: ${messageQueue.length}`);
+          // 【去重检查】防止同一消息被重复处理
+          if (isMessageProcessed(messageId)) {
+            console.log(`[dingtalkbot] 消息 [${messageId.slice(0, 8)}...] 已处理过，跳过`);
+            return { status: EventAck.SUCCESS };
+          }
+          markMessageProcessed(messageId);
 
-          // 启动处理（如果尚未在处理）
-          processNextMessage();
+          // 【增强1&3】使用会话独立队列
+          if (!sessionQueues.has(conversationId)) {
+            sessionQueues.set(conversationId, []);
+          }
+          const queue = sessionQueues.get(conversationId)!;
+          const queueLength = queue.length;
+          
+          // 消息入队到会话队列
+          queue.push({ messageId, senderNick, sessionWebhook, content, botName, timestamp: Date.now() });
+          console.log(`[dingtalkbot] 消息入队 [${messageId.slice(0, 8)}...] 会话队列长度: ${queue.length}`);
+
+          // 【增强1】显示队列位置，让用户知道前面还有多少消息
+          const queuePosition = queueLength + 1;
+          let ackMessage = "👋 收到";
+          if (queuePosition > 1) {
+            ackMessage = `👋 收到，你是第 ${queuePosition} 位，前面还有 ${queueLength} 条消息...`;
+          } else if (isSessionProcessing(conversationId)) {
+            ackMessage = `👋 收到，正在处理中...`;
+          } else {
+            ackMessage = `👋 收到，正在思考中...`;
+          }
+          await sendReply(sessionWebhook, ackMessage);
+          console.log(`[dingtalkbot] 已发送确认给 [${senderNick}]: ${ackMessage}`);
+
+          // 【增强3】启动该会话的处理（会话独立，不会阻塞其他会话）
+          processNextForSession(conversationId);
 
           return { status: EventAck.SUCCESS };
         } catch (err) {
@@ -314,6 +592,16 @@ export default function (pi: ExtensionAPI) {
   }
 
   function disconnect() {
+    // 清理所有等待中的回复
+    for (const [id, pending] of pendingReplies) {
+      clearTimeout(pending.timeout);
+      pending.reject(new Error("机器人已断开连接"));
+    }
+    pendingReplies.clear();
+    
+    // 清理定时器
+    clearInterval(cleanupInterval);
+    
     dingTalkSessions.clear();
     if (client) { 
       try { client.disconnect(); } catch {}
@@ -401,6 +689,91 @@ export default function (pi: ExtensionAPI) {
         await sendMessage(session.sessionWebhook, "text", { content: p.message });
       }
       return { content: [{ type: "text", text: "✅ 已发送" }], details: {} };
+    },
+  });
+
+  pi.registerTool({
+    name: "dingtalkbot-send-and-wait",
+    label: "发送并等待回复",
+    description: "发送消息到钉钉并等待用户回复，超时后自动取消",
+    parameters: Type.Object({
+      message: Type.String({ description: "要发送的消息内容" }),
+      timeout: Type.Optional(Type.Number({ default: 300, description: "等待超时时间（秒），默认300秒（5分钟）" })),
+      format: Type.Optional(Type.Union([Type.Literal("text"), Type.Literal("markdown")], { default: "text" })),
+      messageId: Type.Optional(Type.String({ description: "指定会话的消息ID，不传则发送到最新会话" })),
+    }),
+    async execute(_id, p) {
+      if (!client || !connected) throw new Error("机器人未连接");
+      
+      const targetMsgId = p.messageId;
+      const session = targetMsgId ? dingTalkSessions.get(targetMsgId) : getLatestSession();
+      if (!session) throw new Error("无活跃会话，请先与机器人对话或指定messageId");
+      
+      const sendContent = p.message;
+      
+      try {
+        // 发送消息并等待回复
+        const result = await sendAndWait(session.sessionWebhook, sendContent, { timeout: p.timeout });
+        
+        // 提取用户回复的关键信息
+        const replyPreview = result.reply.slice(0, 100);
+        const replyText = result.reply.length > 100 ? replyPreview + "..." : replyPreview;
+        
+        return { 
+          content: [{ 
+            type: "text", 
+            text: `📨 已收到回复 (${Math.round((Date.now() - (result.message as any).createTime) / 1000)}秒):\n${replyText}` 
+          }],
+          details: { 
+            reply: result.reply,
+            message: result.message,
+            senderNick: result.message.senderNick,
+            sendContent: sendContent,
+          }
+        };
+      } catch (err: any) {
+        if (err.message.includes("超时")) {
+          return { 
+            content: [{ type: "text", text: `⏱️ ${err.message}` }], 
+            details: { timeout: p.timeout || 300, error: err.message, reply: '', message: null, senderNick: '', sendContent: '' }
+          } as any;
+        }
+        throw err;
+      }
+    },
+  });
+
+  pi.registerTool({
+    name: "dingtalkbot-cancel-wait",
+    label: "取消等待",
+    description: "取消指定会话的等待状态",
+    parameters: Type.Object({
+      messageId: Type.Optional(Type.String({ description: "会话的消息ID，不传则取消最新会话的等待" })),
+    }),
+    async execute(_id, p) {
+      if (!client || !connected) throw new Error("机器人未连接");
+      
+      const targetMsgId = p.messageId;
+      const session = targetMsgId ? dingTalkSessions.get(targetMsgId) : getLatestSession();
+      if (!session) throw new Error("无活跃会话");
+      
+      const conversationId = extractConversationId(session.sessionWebhook);
+      let cancelled = false;
+      
+      for (const [id, pending] of pendingReplies) {
+        if (pending.conversationId === conversationId) {
+          clearTimeout(pending.timeout);
+          pendingReplies.delete(id);
+          pending.reject(new Error("等待被取消"));
+          cancelled = true;
+          break;
+        }
+      }
+      
+      return { 
+        content: [{ type: "text", text: cancelled ? "✅ 已取消等待" : "ℹ️ 该会话没有等待中的消息" }], 
+        details: { cancelled, conversationId }
+      };
     },
   });
 
@@ -625,29 +998,28 @@ export default function (pi: ExtensionAPI) {
       console.log(`[dingtalkbot] 回复 [${session.senderNick}]: ${content.slice(0, 50)}`);
       // 回复后删除会话记录
       dingTalkSessions.delete(session.messageId);
-    }
-    
-    // 调试日志：显示提取结果
-    const shouldContinue = (messageId && messageId === currentProcessingMessageId) || 
-                           (isProcessing && messageQueue.length > 0);
-    
-    if (shouldContinue) {
-      const completedId = messageId || currentProcessingMessageId;
       
-      // 清除超时定时器
-      if (completedId) {
-        const timeoutId = messageTimeouts.get(completedId);
+      // 【增强3】清除进度通知定时器
+      if (messageId) {
+        const timeoutId = messageTimeouts.get(messageId);
         if (timeoutId) {
           clearTimeout(timeoutId);
-          messageTimeouts.delete(completedId);
+          messageTimeouts.delete(messageId);
+        }
+        const progressTimeoutId = messageTimeouts.get(messageId + '_progress');
+        if (progressTimeoutId) {
+          clearTimeout(progressTimeoutId);
+          messageTimeouts.delete(messageId + '_progress');
         }
       }
       
-      isProcessing = false;
-      currentProcessingMessageId = null;
-      // 触发下一条消息处理
-      if (messageQueue.length > 0) {
-        processNextMessage();
+      // 【增强3】继续处理该会话的下一条消息
+      if (session.conversationId) {
+        const conversationId = session.conversationId;
+        isProcessing = false;
+        currentProcessingMessageId = null;
+        setSessionProcessing(conversationId, false);
+        processNextForSession(conversationId);
       }
     }
   });
