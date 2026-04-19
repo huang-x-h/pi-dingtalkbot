@@ -1,6 +1,6 @@
 {
   "name": "pi-dingtalkbot",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "type": "module",
   "description": "钉钉智能机器人 Stream 长连接扩展 for pi",
   "keywords": [
