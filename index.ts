@@ -192,9 +192,17 @@ export default function (pi: ExtensionAPI) {
   const pendingReplies = new Map<string, PendingReply>();
   const PENDING_CLEANUP_INTERVAL = 60 * 1000; // 1分钟清理一次
 
-  // 消息超时跟踪（防止 agent_end 不触发导致卡住）
+  // 消息进度跟踪（持续通知）
   const messageTimeouts = new Map<string, NodeJS.Timeout>();
-  const MESSAGE_TIMEOUT = 5 * 60 * 1000; // 5分钟超时
+  
+  // 【增强】持续进度通知时间点：5分钟、15分钟、30分钟、1小时
+  const PROGRESS_NOTIFY_POINTS = [
+    { delay: 5 * 60 * 1000, message: "⏳ 还在处理中，请耐心等待..." },
+    { delay: 15 * 60 * 1000, message: "⏳ 处理时间较长，请继续等待..." },
+    { delay: 30 * 60 * 1000, message: "⏳ 仍在处理中，可能需要较长时间..." },
+    { delay: 60 * 60 * 1000, message: "⏳ 已处理超过1小时，感谢您的耐心..." },
+  ];
+  const PROGRESS_NOTIFY_INTERVAL = 60 * 1000; // 1分钟后开始检查进度通知
 
   // 已处理的消息ID（用于去重，防止同一消息被处理多次）
   const processedMessages = new Set<string>();
@@ -204,9 +212,6 @@ export default function (pi: ExtensionAPI) {
   // 当前正在处理的消息ID（用于等待处理完成）
   let currentProcessingMessageId: string | null = null;
   let isProcessing = false;
-
-  // 【增强2】处理进度通知 - 10秒后发送进度提示
-  const PROGRESS_NOTIFY_DELAY = 10 * 1000; // 10秒
 
   // 获取指定会话的队列长度（前面还有几条消息）
   function getSessionQueueLength(conversationId: string): number {
@@ -295,16 +300,62 @@ export default function (pi: ExtensionAPI) {
     }, PROCESSED_MESSAGE_TTL);
   }
 
-  // 【增强2】发送处理进度通知
+  // 记录已发送的通知时间点（避免重复发送）
+  const notifiedPoints = new Map<string, Set<number>>();
+
+  // 【增强】发送处理进度通知（持续通知）
   async function sendProgressNotification(
     messageId: string,
     sessionWebhook: string,
-    senderNick: string
+    senderNick: string,
+    elapsedMs: number
   ): Promise<void> {
     if (currentProcessingMessageId !== messageId) return; // 消息已被处理完
     
+    // 获取该消息已发送的通知时间点
+    if (!notifiedPoints.has(messageId)) {
+      notifiedPoints.set(messageId, new Set());
+    }
+    const sent = notifiedPoints.get(messageId)!;
+    
+    // 检查并发送符合条件的进度通知
+    for (const point of PROGRESS_NOTIFY_POINTS) {
+      if (!sent.has(point.delay) && elapsedMs >= point.delay) {
+        sent.add(point.delay);
+        await sendReply(sessionWebhook, point.message);
+        break; // 每次只发送一个通知
+      }
+    }
+  }
 
-    await sendReply(sessionWebhook, `⏳ 还在处理中，请稍候...`);
+  // 【增强】启动持续进度通知检查
+  function startProgressNotifier(
+    messageId: string,
+    sessionWebhook: string,
+    senderNick: string,
+    startTime: number
+  ) {
+    // 定期检查是否需要发送进度通知
+    const checkInterval = setInterval(() => {
+      // 检查消息是否还在处理
+      if (currentProcessingMessageId !== messageId) {
+        clearInterval(checkInterval);
+        notifiedPoints.delete(messageId);
+        return;
+      }
+      
+      const elapsed = Date.now() - startTime;
+      sendProgressNotification(messageId, sessionWebhook, senderNick, elapsed);
+      
+      // 如果所有通知都已发送，且消息仍在处理，可以考虑清理
+      const sent = notifiedPoints.get(messageId);
+      if (sent && sent.size >= PROGRESS_NOTIFY_POINTS.length) {
+        // 所有通知都已发送，不再检查
+        clearInterval(checkInterval);
+      }
+    }, PROGRESS_NOTIFY_INTERVAL);
+    
+    messageTimeouts.set(messageId + '_progress', checkInterval);
   }
 
   // 【增强3】处理队列中下一条消息（会话独立版）
@@ -339,27 +390,8 @@ export default function (pi: ExtensionAPI) {
         // @ts-ignore
         await pi.sendUserMessage([{ type: "text", text: messageText }], { deliverAs: "steer" });
         
-        // 设置进度通知定时器（10秒后发送）
-        const progressTimeoutId = setTimeout(() => {
-          sendProgressNotification(messageId, sessionWebhook, senderNick);
-        }, PROGRESS_NOTIFY_DELAY);
-        messageTimeouts.set(messageId + '_progress', progressTimeoutId);
-        
-        // 设置超时保护（防止 agent_end 不触发导致卡住）
-        const timeoutId = setTimeout(() => {
-          if (currentProcessingMessageId === messageId) {
-            console.log(`[dingtalkbot] 消息 ${messageId.slice(0, 8)}... 处理超时`);
-            isProcessing = false;
-            currentProcessingMessageId = null;
-            dingTalkSessions.delete(messageId);
-            messageTimeouts.delete(messageId);
-            messageTimeouts.delete(messageId + '_progress');
-            setSessionProcessing(conversationId, false);
-            // 继续处理该会话的下一条消息
-            processNextForSession(conversationId);
-          }
-        }, MESSAGE_TIMEOUT);
-        messageTimeouts.set(messageId, timeoutId);
+        // 【增强】启动持续进度通知
+        startProgressNotifier(messageId, sessionWebhook, senderNick, Date.now());
         
       } catch (err) {
         console.error('[dingtalkbot] 发送给 pi 失败:', err);
@@ -444,18 +476,8 @@ export default function (pi: ExtensionAPI) {
         // @ts-ignore
         await pi.sendUserMessage([{ type: "text", text: messageText }], { deliverAs: "steer" });
         
-        // 设置超时保护（防止 agent_end 不触发导致卡住）
-        const timeoutId = setTimeout(() => {
-          if (currentProcessingMessageId === messageId) {
-            console.log(`[dingtalkbot] 消息 ${messageId.slice(0, 8)}... 处理超时`);
-            isProcessing = false;
-            currentProcessingMessageId = null;
-            dingTalkSessions.delete(messageId);
-            messageTimeouts.delete(messageId);
-            processNextMessage();
-          }
-        }, MESSAGE_TIMEOUT);
-        messageTimeouts.set(messageId, timeoutId);
+        // 【增强】启动持续进度通知
+        startProgressNotifier(messageId, sessionWebhook, senderNick, Date.now());
         
       } catch (err) {
         console.error('[dingtalkbot] 发送给 pi 失败:', err);
