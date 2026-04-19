@@ -303,7 +303,7 @@ export default function (pi: ExtensionAPI) {
   ): Promise<void> {
     if (currentProcessingMessageId !== messageId) return; // 消息已被处理完
     
-    console.log(`[dingtalkbot] 发送进度通知给 [${senderNick}]`);
+
     await sendReply(sessionWebhook, `⏳ 还在处理中，请稍候...`);
   }
 
@@ -483,8 +483,6 @@ export default function (pi: ExtensionAPI) {
       currentCtx = ctx;
       activeBotConfig = bot;
       
-      console.log(`[dingtalkbot] 连接中: ${getBotDisplayName(bot)}`);
-
       // @ts-ignore
       client = new DWClient({ clientId: bot.clientId, clientSecret: bot.clientSecret });
 
@@ -502,15 +500,11 @@ export default function (pi: ExtensionAPI) {
 
           // 检查是否有等待该会话回复的消息
           if (handlePendingReply(conversationId, content, message)) {
-            console.log(`[dingtalkbot] [${botName}] [${senderNick}] 回复等待中的消息: ${content.slice(0, 30)}...`);
             return { status: EventAck.SUCCESS };
           }
 
-          console.log(`[dingtalkbot] [${botName}] [${senderNick}] content=${content.slice(0, 30)}...`);
-
           // 【去重检查】防止同一消息被重复处理
           if (isMessageProcessed(messageId)) {
-            console.log(`[dingtalkbot] 消息 [${messageId.slice(0, 8)}...] 已处理过，跳过`);
             return { status: EventAck.SUCCESS };
           }
           markMessageProcessed(messageId);
@@ -524,7 +518,7 @@ export default function (pi: ExtensionAPI) {
           
           // 消息入队到会话队列
           queue.push({ messageId, senderNick, sessionWebhook, content, botName, timestamp: Date.now() });
-          console.log(`[dingtalkbot] 消息入队 [${messageId.slice(0, 8)}...] 会话队列长度: ${queue.length}`);
+
 
           // 【增强1】显示队列位置，让用户知道前面还有多少消息
           const queuePosition = queueLength + 1;
@@ -537,7 +531,7 @@ export default function (pi: ExtensionAPI) {
             ackMessage = `👋 收到，正在思考中...`;
           }
           await sendReply(sessionWebhook, ackMessage);
-          console.log(`[dingtalkbot] 已发送确认给 [${senderNick}]: ${ackMessage}`);
+
 
           // 【增强3】启动该会话的处理（会话独立，不会阻塞其他会话）
           processNextForSession(conversationId);
@@ -995,7 +989,7 @@ export default function (pi: ExtensionAPI) {
     
     if (session) {
       await sendReply(session.sessionWebhook, content.trim());
-      console.log(`[dingtalkbot] 回复 [${session.senderNick}]: ${content.slice(0, 50)}`);
+
       // 回复后删除会话记录
       dingTalkSessions.delete(session.messageId);
       
