@@ -543,13 +543,17 @@ export default function (pi: ExtensionAPI) {
 
 
           // 【增强1】显示队列位置，让用户知道前面还有多少消息
-          const queuePosition = queueLength + 1;
+          // queueLength 是当前队列中已有的消息数量（不包括刚入队的这条）
+          // 如果 queueLength > 0，说明前面有消息在等待
           let ackMessage = "👋 收到";
-          if (queuePosition > 1) {
-            ackMessage = `👋 收到，你是第 ${queuePosition} 位，前面还有 ${queueLength} 条消息...`;
+          if (queueLength > 0) {
+            // 队列中有等待的消息，显示位置（当前是第 queueLength+1 位，前面有 queueLength 条）
+            ackMessage = `👋 收到，你是第 ${queueLength + 1} 位，前面还有 ${queueLength} 条消息...`;
           } else if (isSessionProcessing(conversationId)) {
+            // 队列为空但正在处理，说明当前这条消息正在被处理
             ackMessage = `👋 收到，正在处理中...`;
           } else {
+            // 队列为空且没有处理中，这是第一条消息
             ackMessage = `👋 收到，正在思考中...`;
           }
           await sendReply(sessionWebhook, ackMessage);
