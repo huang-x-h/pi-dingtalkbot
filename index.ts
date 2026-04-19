@@ -347,8 +347,8 @@ export default function (pi: ExtensionAPI) {
         
         // 设置超时保护（防止 agent_end 不触发导致卡住）
         const timeoutId = setTimeout(() => {
-          console.log(`[dingtalkbot] 消息 ${messageId.slice(0, 8)}... 处理超时`);
           if (currentProcessingMessageId === messageId) {
+            console.log(`[dingtalkbot] 消息 ${messageId.slice(0, 8)}... 处理超时`);
             isProcessing = false;
             currentProcessingMessageId = null;
             dingTalkSessions.delete(messageId);
@@ -446,8 +446,8 @@ export default function (pi: ExtensionAPI) {
         
         // 设置超时保护（防止 agent_end 不触发导致卡住）
         const timeoutId = setTimeout(() => {
-          console.log(`[dingtalkbot] 消息 ${messageId.slice(0, 8)}... 处理超时`);
           if (currentProcessingMessageId === messageId) {
+            console.log(`[dingtalkbot] 消息 ${messageId.slice(0, 8)}... 处理超时`);
             isProcessing = false;
             currentProcessingMessageId = null;
             dingTalkSessions.delete(messageId);
