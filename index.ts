@@ -673,7 +673,7 @@ export default function (pi: ExtensionAPI) {
       
       const targetMsgId = p.messageId;
       const session = targetMsgId ? dingTalkSessions.get(targetMsgId) : getLatestSession();
-      if (!session) throw new Error("无活跃会话");
+      if (!session) throw new Error("无法发送：钉钉需要先收到用户消息才能回复。请等待用户发消息后再发送，或使用 messageId 参数指定会话。");
       
       const files: string[] = [];
       for (const fp of p.paths) {
@@ -701,7 +701,7 @@ export default function (pi: ExtensionAPI) {
       
       const targetMsgId = p.messageId;
       const session = targetMsgId ? dingTalkSessions.get(targetMsgId) : getLatestSession();
-      if (!session) throw new Error("无活跃会话");
+      if (!session) throw new Error("无法发送：钉钉需要先收到用户消息才能回复。请等待用户发消息后再发送，或使用 messageId 参数指定会话。");
       
       if (p.format === "markdown") {
         await sendMessage(session.sessionWebhook, "markdown", { title: "消息", text: p.message });
@@ -775,7 +775,7 @@ export default function (pi: ExtensionAPI) {
       
       const targetMsgId = p.messageId;
       const session = targetMsgId ? dingTalkSessions.get(targetMsgId) : getLatestSession();
-      if (!session) throw new Error("无活跃会话");
+      if (!session) throw new Error("无法发送：钉钉需要先收到用户消息才能回复。请等待用户发消息后再发送，或使用 messageId 参数指定会话。");
       
       const conversationId = extractConversationId(session.sessionWebhook);
       let cancelled = false;
