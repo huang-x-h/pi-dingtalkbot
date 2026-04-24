@@ -8,10 +8,8 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
-    "allowSyntheticDefaultImports": true,
-    "noEmit": true,
-    "lib": ["ES2022"]
+    "allowImportingTsExtensions": true,
+    "noEmit": true
   },
-  "include": ["index.ts"],
-  "exclude": ["node_modules"]
+  "include": ["*.ts"]
 }

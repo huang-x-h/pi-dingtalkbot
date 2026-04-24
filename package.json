@@ -30,8 +30,7 @@
   "peerDependencies": {
     "@mariozechner/pi-agent-core": "*",
     "@mariozechner/pi-ai": "*",
-    "@mariozechner/pi-coding-agent": "*",
-    "@sinclair/typebox": "*"
+    "@mariozechner/pi-coding-agent": "*"
   },
   "dependencies": {
     "dingtalk-stream": "^2.0.0"

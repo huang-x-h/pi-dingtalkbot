@@ -11,7 +11,7 @@ import { homedir } from "node:os";
 import { DWClient, TOPIC_ROBOT, EventAck } from "dingtalk-stream";
 
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
+import { Type } from "@mariozechner/pi-ai";
 
 // ============================================================================
 // Config
