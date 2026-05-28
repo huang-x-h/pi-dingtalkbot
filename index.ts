@@ -669,17 +669,17 @@ export default function (pi: ExtensionAPI) {
       messageId: Type.Optional(Type.String()),
     }),
     async execute(_id, p) {
-      if (!client || !connected) throw new Error("机器人未连接");
+      if (!client || !connected) return { content: [{ type: "text", text: "机器人未连接" }], details: {} };
       
       const targetMsgId = p.messageId;
       const session = targetMsgId ? dingTalkSessions.get(targetMsgId) : getLatestSession();
-      if (!session) throw new Error("无法发送：钉钉需要先收到用户消息才能回复。请等待用户发消息后再发送，或使用 messageId 参数指定会话。");
+      if (!session) return { content: [{ type: "text", text: "无活跃会话" }], details: {} };
       
       const files: string[] = [];
       for (const fp of p.paths) {
         try { if ((await stat(fp)).isFile()) files.push(basename(fp)); } catch {}
       }
-      if (files.length === 0) throw new Error("没有有效的文件");
+      if (files.length === 0) return { content: [{ type: "text", text: "没有有效的文件" }], details: {} };
       
       const text = `📎 文件列表:\n${files.map(f => `- ${f}`).join("\n")}\n\n（钉钉机器人暂不支持直接发送文件附件）`;
       await sendMessage(session.sessionWebhook, "text", { content: text });
@@ -697,11 +697,11 @@ export default function (pi: ExtensionAPI) {
       messageId: Type.Optional(Type.String()),
     }),
     async execute(_id, p) {
-      if (!client || !connected) throw new Error("机器人未连接");
+      if (!client || !connected) return { content: [{ type: "text", text: "机器人未连接" }], details: {} };
       
       const targetMsgId = p.messageId;
       const session = targetMsgId ? dingTalkSessions.get(targetMsgId) : getLatestSession();
-      if (!session) throw new Error("无法发送：钉钉需要先收到用户消息才能回复。请等待用户发消息后再发送，或使用 messageId 参数指定会话。");
+      if (!session) return { content: [{ type: "text", text: "无活跃会话" }], details: {} };
       
       if (p.format === "markdown") {
         await sendMessage(session.sessionWebhook, "markdown", { title: "消息", text: p.message });
@@ -723,43 +723,33 @@ export default function (pi: ExtensionAPI) {
       messageId: Type.Optional(Type.String({ description: "指定会话的消息ID，不传则发送到最新会话" })),
     }),
     async execute(_id, p) {
-      if (!client || !connected) throw new Error("机器人未连接");
+      if (!client || !connected) return { content: [{ type: "text", text: "机器人未连接" }], details: {} };
       
       const targetMsgId = p.messageId;
       const session = targetMsgId ? dingTalkSessions.get(targetMsgId) : getLatestSession();
-      if (!session) throw new Error("无活跃会话，请先与机器人对话或指定messageId");
+      if (!session) return { content: [{ type: "text", text: "无活跃会话" }], details: {} };
       
       const sendContent = p.message;
       
-      try {
-        // 发送消息并等待回复
-        const result = await sendAndWait(session.sessionWebhook, sendContent, { timeout: p.timeout });
-        
-        // 提取用户回复的关键信息
-        const replyPreview = result.reply.slice(0, 100);
-        const replyText = result.reply.length > 100 ? replyPreview + "..." : replyPreview;
-        
-        return { 
-          content: [{ 
-            type: "text", 
-            text: `📨 已收到回复 (${Math.round((Date.now() - (result.message as any).createTime) / 1000)}秒):\n${replyText}` 
-          }],
-          details: { 
-            reply: result.reply,
-            message: result.message,
-            senderNick: result.message.senderNick,
-            sendContent: sendContent,
-          }
-        };
-      } catch (err: any) {
-        if (err.message.includes("超时")) {
-          return { 
-            content: [{ type: "text", text: `⏱️ ${err.message}` }], 
-            details: { timeout: p.timeout || 300, error: err.message, reply: '', message: null, senderNick: '', sendContent: '' }
-          } as any;
+      // 发送消息并等待回复
+      const result = await sendAndWait(session.sessionWebhook, sendContent, { timeout: p.timeout });
+      
+      // 提取用户回复的关键信息
+      const replyPreview = result.reply.slice(0, 100);
+      const replyText = result.reply.length > 100 ? replyPreview + "..." : replyPreview;
+      
+      return { 
+        content: [{ 
+          type: "text", 
+          text: `📨 已收到回复 (${Math.round((Date.now() - (result.message as any).createTime) / 1000)}秒):\n${replyText}` 
+        }],
+        details: { 
+          reply: result.reply,
+          message: result.message,
+          senderNick: result.message.senderNick,
+          sendContent: sendContent,
         }
-        throw err;
-      }
+      };
     },
   });
 
@@ -771,11 +761,11 @@ export default function (pi: ExtensionAPI) {
       messageId: Type.Optional(Type.String({ description: "会话的消息ID，不传则取消最新会话的等待" })),
     }),
     async execute(_id, p) {
-      if (!client || !connected) throw new Error("机器人未连接");
+      if (!client || !connected) return { content: [{ type: "text", text: "机器人未连接" }], details: {} };
       
       const targetMsgId = p.messageId;
       const session = targetMsgId ? dingTalkSessions.get(targetMsgId) : getLatestSession();
-      if (!session) throw new Error("无法发送：钉钉需要先收到用户消息才能回复。请等待用户发消息后再发送，或使用 messageId 参数指定会话。");
+      if (!session) return { content: [{ type: "text", text: "无活跃会话" }], details: {} };
       
       const conversationId = extractConversationId(session.sessionWebhook);
       let cancelled = false;
@@ -982,11 +972,15 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("session_shutdown", () => disconnect());
 
-  pi.on("before_agent_start", async (e) => ({
-    systemPrompt: e.systemPrompt + PROMPT,
-  }));
+  pi.on("before_agent_start", async (e) => {
+    // 只有机器人连接后才添加提示
+    if (!connected) return {};
+    return { systemPrompt: e.systemPrompt + PROMPT };
+  });
 
   pi.on("agent_end", async (e) => {
+    // 只有机器人连接后才处理回复
+    if (!connected) return;
     setStatus();
     
     const msg = e.messages[e.messages.length - 1] as any;
@@ -1015,24 +1009,20 @@ export default function (pi: ExtensionAPI) {
     
     if (session) {
       await sendReply(session.sessionWebhook, content.trim());
-
-      // 回复后删除会话记录
       dingTalkSessions.delete(session.messageId);
       
-      // 【增强3】清除进度通知（使用 session.messageId 确保清理）
+      // 清除进度通知
       const msgId = session.messageId;
       if (msgId) {
-        // 清除定时器
         const progressInterval = messageTimeouts.get(msgId + '_progress');
         if (progressInterval) {
           clearInterval(progressInterval);
           messageTimeouts.delete(msgId + '_progress');
         }
-        // 清除已发送通知记录
         notifiedPoints.delete(msgId);
       }
       
-      // 【增强3】继续处理该会话的下一条消息
+      // 继续处理该会话的下一条消息
       if (session.conversationId) {
         const conversationId = session.conversationId;
         isProcessing = false;
